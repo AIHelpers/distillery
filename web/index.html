@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Distillery — No-Code Fine-Tuning</title>
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand"><img src="/static/logo.svg" alt="" class="brand-icon" /> Distillery</div>
+      <div class="tagline">Task-to-Model Platform — define a task, get a model</div>
+    </header>
+
+    <div class="layout">
+      <aside class="sidebar">
+        <h2>Tasks</h2>
+        <div id="task-list" class="task-list"></div>
+        <button id="new-task-btn" class="btn primary block">+ New Task</button>
+      </aside>
+
+      <main class="main" id="main">
+        <div class="empty-state">
+          <h2>Welcome to Distillery</h2>
+          <p>Create a task on the left to get started: describe what you need in plain English,
+             add a few example input/output pairs, and Distillery will curate a dataset,
+             pick a right-sized base model, fine-tune it, and deploy it as an API — all with
+             a portable "run anywhere" export so you're never locked in.</p>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <div id="modal-root"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

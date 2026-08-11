@@ -1,0 +1,138 @@
+# Configuration file for golangci-lint (v2 config format).
+# https://golangci-lint.run/
+#
+# The project follows a pragmatic convention where:
+#   - errors from I/O like http.ResponseWriter.Write are intentionally ignored
+#     in thin HTTP handlers (the response is already in flight).
+#   - domain-layer structs carry encoding/json tags (standard library only).
+#   - comments are in English and do not always end with a period.
+#   - mock-serving uses math/rand (non-crypto) by design.
+#
+# The settings below are tuned to this codebase so the linter stays useful
+# without drowning the developer in style-based noise.
+
+version: "2"
+
+# ---------------------------------------------------------------------------
+# Run / analysis options
+# ---------------------------------------------------------------------------
+run:
+  # Timeout for the whole lint run.
+  timeout: 5m
+  # Resolve paths relative to go.mod (the module root).
+  relative-path-mode: gomod
+  # Go version from go.mod — used for language-version-aware linters.
+  go: "1.22"
+  # Also lint test files.
+  tests: true
+  # Allow golangci-lint to pick up build info from VCS automatically.
+  enable-build-vcs: true
+  # Concurrency (0 = auto, based on available CPUs).
+  concurrency: 0
+
+# ---------------------------------------------------------------------------
+# Linters
+# ---------------------------------------------------------------------------
+linters:
+  # Start from the curated "standard" set (govet, staticcheck, errcheck, …).
+  default: standard
+  # Enable additional linters that are useful for this project.
+  enable:
+    - bidichk
+    - gocritic
+    - godot
+    - misspell
+    - lll
+    - nakedret
+    - nilnil
+    - nosprintfhostport
+    - unconvert
+    - wastedassign
+    - gomodguard
+  # Disable linters that produce noise in this codebase.
+  disable:
+    - wrapcheck  # wrapping every stdlib error adds noise without much value here
+    - gochecknoglobals  # composition-root globals are intentional in some deployments
+  settings:
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+    godot:
+      # English comments are the project convention; check punctuation only.
+      capitalize: false
+      scope: all
+      period: true
+    lll:
+      # The project uses long descriptive names and English comments.
+      line-length: 120
+      tab-width: 1
+    nakedret:
+      max-func-lines: 10
+    gomodguard:
+      allowed:
+        golang-versions:
+          - ">= 1.22.0"
+  # -----------------------------------------------------------------------
+  # Per-linter / per-path exclusions tuned to the patterns seen in this code.
+  # -----------------------------------------------------------------------
+  exclusions:
+    # Mode of the generated files analysis.
+    generated: lax
+    # Log a warning if an exclusion rule is unused.
+    warn-unused: true
+    # Predefined exclusion rule presets.
+    presets:
+      - comments
+      - std-error-handling
+      - common-false-positives
+      - legacy
+    rules:
+      # Errors returned by http.ResponseWriter.Write / WriteHeader are
+      # deliberately ignored in HTTP handlers once headers have been sent.
+      - path: _handlers\.go$
+        linters:
+          - errcheck
+        text: "Error return value of .*\\.(Write|WriteHeader) is not checked"
+      # math/rand is used on purpose for chaos-testing, not cryptography.
+      - path: internal/usecase/mockserving_service\.go$
+        linters:
+          - gosec
+        text: "G404"
+      # jsonstore deliberately ignores save() errors after mutations — the
+      # in-memory state is the source of truth.
+      - path: internal/adapter/repository/jsonstore/store\.go$
+        linters:
+          - errcheck
+        text: "Error return value of .*\\.save is not checked"
+
+# ---------------------------------------------------------------------------
+# Formatters
+# ---------------------------------------------------------------------------
+formatters:
+  enable:
+    - gci
+    - gofumpt
+    - gofmt
+    - goimports
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/example/openapi-mocker)
+  exclusions:
+    generated: strict
+
+# ---------------------------------------------------------------------------
+# Issues output
+# ---------------------------------------------------------------------------
+issues:
+  # Show every issue — don't cap per linter.
+  max-issues-per-linter: 0
+  # Don't deduplicate by text; surface unique locations.
+  max-same-issues: 0
+  # New-code-only mode is useful once the codebase stabilises; for now
+  # report everything so existing issues are visible.
+  new: false

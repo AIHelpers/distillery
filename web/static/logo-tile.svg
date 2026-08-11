@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="Distillery logo">
+  <title>Distillery</title>
+  <defs>
+    <linearGradient id="flaskGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ff7a3d"/>
+      <stop offset="100%" stop-color="#b8431a"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="192" height="192" rx="28" fill="#171513"/>
+  <rect x="4.5" y="4.5" width="191" height="191" rx="27.5" fill="none" stroke="#2b2723" stroke-width="1"/>
+  <circle cx="100" cy="126" r="34" fill="url(#flaskGrad)"/>
+  <path d="M87 97 L87 79 L113 79 L113 97" fill="none" stroke="#c9a04a" stroke-width="9" stroke-linejoin="round"/>
+  <rect x="84.5" y="74" width="31" height="6" rx="2" fill="#c9a04a"/>
+  <path d="M113 85 C 135 85, 135 96, 135 105 L135 112" fill="none" stroke="#c9a04a" stroke-width="5.5" stroke-linecap="round"/>
+  <ellipse cx="135" cy="121" rx="4.5" ry="6" fill="#ff7a3d"/>
+  <ellipse cx="136.5" cy="134" rx="2.7" ry="3.6" fill="#c9a04a" opacity="0.85"/>
+  <rect x="79" y="164" width="42" height="6" rx="2" fill="#2b2723"/>
+  <path d="M94 170 L106 170 L100 179 Z" fill="#b8431a"/>
+</svg>

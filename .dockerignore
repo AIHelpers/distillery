@@ -1,0 +1,4 @@
+data/
+distillery
+*.log
+.git/
