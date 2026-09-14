@@ -217,6 +217,231 @@ func TestDatasetUsecase_ImportCSV_TaskNotFound(t *testing.T) {
 	}
 }
 
+// --- ImportJSONL ---.
+
+func TestDatasetUsecase_ImportJSONL_Alpaca_AutoDetect(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration}}
+	examples := &mockExampleRepo{}
+	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
+
+	content := `{"instruction":"Write a function that adds two numbers", "input":"", "output":"func add(a, b int) int { return a + b }", "category":"code-generation"}
+{"instruction":"Explain channels", "input":"", "output":"Channels are typed conduits for goroutine communication.", "id":"ex_1"}`
+
+	stats, err := uc.ImportJSONL("task_1", content, "")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if stats == nil {
+		t.Fatal("expected non-nil stats")
+	}
+
+	if len(examples.addBatch) != 2 {
+		t.Errorf("expected 2 examples, got %d", len(examples.addBatch))
+	}
+
+	// Alpaca instruction maps directly to input.
+	if examples.addBatch[0].Input != "Write a function that adds two numbers" {
+		t.Errorf("unexpected input: %q", examples.addBatch[0].Input)
+	}
+	if examples.addBatch[0].Output != "func add(a, b int) int { return a + b }" {
+		t.Errorf("unexpected output: %q", examples.addBatch[0].Output)
+	}
+}
+
+func TestDatasetUsecase_ImportJSONL_Alpaca_WithInput(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration}}
+	examples := &mockExampleRepo{}
+	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
+
+	content := `{"instruction":"Refactor this code", "input":"func old() int { return 1 }", "output":"func new() int { return 1 }"}`
+
+	_, err := uc.ImportJSONL("task_1", content, "alpaca")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if len(examples.addBatch) != 1 {
+		t.Fatalf("expected 1 example, got %d", len(examples.addBatch))
+	}
+
+	// Instruction + input are combined into one prompt.
+	expected := "Refactor this code\n\nfunc old() int { return 1 }"
+	if examples.addBatch[0].Input != expected {
+		t.Errorf("expected input %q, got %q", expected, examples.addBatch[0].Input)
+	}
+}
+
+func TestDatasetUsecase_ImportJSONL_Alpaca_SkipsEmptyOutput(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration}}
+	examples := &mockExampleRepo{}
+	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
+
+	// Second record has no output — should be skipped.
+	content := `{"instruction":"Good", "input":"","output":"response"}
+{"instruction":"Bad", "input":"","output":""}`
+
+	_, err := uc.ImportJSONL("task_1", content, "")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if len(examples.addBatch) != 1 {
+		t.Errorf("expected 1 example (bad record skipped), got %d", len(examples.addBatch))
+	}
+}
+
+func TestDatasetUsecase_ImportJSONL_Chat_AutoDetect(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration}}
+	examples := &mockExampleRepo{}
+	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
+
+	content := `{"messages":[{"role":"system","content":"You are a Go expert"},{"role":"user","content":"Write a function to reverse a string"},{"role":"assistant","content":"func reverse(s string) string { ... }"}], "id":"rec_1", "category":"code-generation"}`
+
+	stats, err := uc.ImportJSONL("task_1", content, "")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if stats == nil {
+		t.Fatal("expected non-nil stats")
+	}
+
+	if len(examples.addBatch) != 1 {
+		t.Fatalf("expected 1 example, got %d", len(examples.addBatch))
+	}
+
+	// System + user messages become input; assistant becomes output.
+	expectedInput := "You are a Go expert\n\nWrite a function to reverse a string"
+	if examples.addBatch[0].Input != expectedInput {
+		t.Errorf("expected input %q, got %q", expectedInput, examples.addBatch[0].Input)
+	}
+
+	if examples.addBatch[0].Output != "func reverse(s string) string { ... }" {
+		t.Errorf("unexpected output: %q", examples.addBatch[0].Output)
+	}
+}
+
+func TestDatasetUsecase_ImportJSONL_Chat_LastAssistantWins(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration}}
+	examples := &mockExampleRepo{}
+	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
+
+	// Two assistant messages — only the last becomes output.
+	content := `{"messages":[{"role":"user","content":"What is a slice?"},{"role":"assistant","content":"A slice is a view into an array."},{"role":"user","content":"And a map?"},{"role":"assistant","content":"A map is an unordered key-value store."}]}`
+
+	_, err := uc.ImportJSONL("task_1", content, "chat")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if len(examples.addBatch) != 1 {
+		t.Fatalf("expected 1 example, got %d", len(examples.addBatch))
+	}
+
+	expectedInput := "What is a slice?\n\nAnd a map?"
+	if examples.addBatch[0].Input != expectedInput {
+		t.Errorf("expected input %q, got %q", expectedInput, examples.addBatch[0].Input)
+	}
+
+	if examples.addBatch[0].Output != "A map is an unordered key-value store." {
+		t.Errorf("expected last assistant message, got %q", examples.addBatch[0].Output)
+	}
+}
+
+func TestDatasetUsecase_ImportJSONL_ForcedAlpacaOnChat(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration}}
+	examples := &mockExampleRepo{}
+	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
+
+	// Forcing alpaca on chat records should yield no valid pairs → ErrInvalidInput.
+	content := `{"messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"}]}`
+
+	_, err := uc.ImportJSONL("task_1", content, "alpaca")
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput when forced format mismatches, got %v", err)
+	}
+}
+
+func TestDatasetUsecase_ImportJSONL_Empty(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration}}
+	uc := newDatasetUsecase(tasks, &mockExampleRepo{}, &mockSynthGen{})
+
+	_, err := uc.ImportJSONL("task_1", "", "")
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for empty content, got %v", err)
+	}
+}
+
+func TestDatasetUsecase_ImportJSONL_BlankLinesOnly(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration}}
+	uc := newDatasetUsecase(tasks, &mockExampleRepo{}, &mockSynthGen{})
+
+	_, err := uc.ImportJSONL("task_1", "\n\n  \n", "")
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for blank-only content, got %v", err)
+	}
+}
+
+func TestDatasetUsecase_ImportJSONL_MalformedJSON(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration}}
+	uc := newDatasetUsecase(tasks, &mockExampleRepo{}, &mockSynthGen{})
+
+	_, err := uc.ImportJSONL("task_1", "not a json line", "")
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Errorf("expected ErrInvalidInput for malformed JSON, got %v", err)
+	}
+}
+
+func TestDatasetUsecase_ImportJSONL_UnknownFieldsIgnored(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration}}
+	examples := &mockExampleRepo{}
+	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
+
+	// Extra fields (id, category, tags) don't break parsing.
+	content := `{"instruction":"Write a test", "input":"", "output":"func TestX(t *testing.T) {}", "id":"ex_1", "category":"testing", "tags":["go","unit"]}`
+
+	_, err := uc.ImportJSONL("task_1", content, "")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if len(examples.addBatch) != 1 {
+		t.Errorf("expected 1 example, got %d", len(examples.addBatch))
+	}
+}
+
+func TestDatasetUsecase_ImportJSONL_TaskNotFound(t *testing.T) {
+	t.Parallel()
+
+	uc := newDatasetUsecase(&mockTaskRepo{}, &mockExampleRepo{}, &mockSynthGen{})
+
+	_, err := uc.ImportJSONL("missing", `{"instruction":"a","input":"","output":"b"}`, "")
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
 // --- UpdateExample ---.
 
 func TestDatasetUsecase_UpdateExample_Valid(t *testing.T) {

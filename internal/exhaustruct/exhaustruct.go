@@ -1,9 +1,9 @@
-// Command exhaustruct rewrites every composite literal of a struct type
+// Package exhaustruct rewrites every composite literal of a struct type
 // annotated with //exhaustruct:enforce so that all fields are present,
 // inserting zero values for the missing ones (adding imports as needed).
 //
-// Usage: go run tools/exhaustruct.
-package main
+// It is invoked via the server binary: go run ./cmd/server -exhaustruct.
+package exhaustruct
 
 import (
 	"bytes"
@@ -579,12 +579,13 @@ func processFile(_, pkgName string, fset *token.FileSet, f *ast.File) (changed b
 	return changed
 }
 
-func main() {
-	root := "internal"
-
+// Run rewrites every composite literal of an enforced struct type under the
+// given root directory so that all fields are present, inserting zero values
+// for the missing ones. It returns the number of files rewritten.
+func Run(root string) (int, error) {
 	var filepaths []string
 
-	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".go") {
 			return nil
 		}
@@ -593,6 +594,9 @@ func main() {
 
 		return nil
 	})
+	if err != nil {
+		return 0, err
+	}
 
 	total := 0
 
@@ -633,5 +637,5 @@ func main() {
 		}
 	}
 
-	fmt.Printf("rewrote %d files\n", total)
+	return total, nil
 }

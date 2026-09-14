@@ -108,7 +108,6 @@ linters:
             - "distillery/internal"
             - "distillery/cmd"
             - "distillery/web"
-            - "distillery/tools"
             - "distillery/domain"
     gofumpt:
       # The project deliberately sorts stdlib, third-party, and internal imports
@@ -159,7 +158,7 @@ linters:
         - "0.85"
       ignored-files:
         - internal[\\/]infra[\\/]simulation[\\/].*\.go$
-        - tools[\\/].*\.go$
+        - internal[\\/]exhaustruct[\\/].*\.go$
     exhaustruct_v5:
        # Opt-in mode: only types marked with //exhaustruct:enforce are checked.
        # This keeps the rule on exported domain types (whose data is part of the
@@ -232,7 +231,7 @@ linters:
         text: "Error return value of .*\\.save is not checked"
       # The exhaustruct tool deliberately uses string literals for JSON field
       # names and Go type-name strings; extracting constants would harm clarity.
-      - path: .*exhaustruct[\\/]main\.go$
+      - path: .*internal[\\/]exhaustruct[\\/]exhaustruct\.go$
         linters:
           - goconst
         text: "make it a constant"
@@ -293,7 +292,7 @@ linters:
         text: "(G404|G403)"
       # WriteFile permissions of 0644 are intentional for the persistent
       # JSON store and the exhaustruct tool; data is not security-sensitive.
-      - path: .*(repository[\\/]memory[\\/]store\.go|tools[\\/]exhaustruct[\\/]main\.go|.*_test\.go)$
+      - path: .*(repository[\\/]memory[\\/]store\.go|internal[\\/]exhaustruct[\\/]exhaustruct\.go|.*_test\.go)$
         linters:
           - gosec
         text: "G306"

@@ -46,6 +46,9 @@ func NewRouter(h Handlers, webFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/v1/tasks/{taskID}/examples/import", func(w http.ResponseWriter, r *http.Request) {
 		h.Dataset.ImportCSV(w, r, r.PathValue("taskID"))
 	})
+	mux.HandleFunc("POST /api/v1/tasks/{taskID}/examples/import-jsonl", func(w http.ResponseWriter, r *http.Request) {
+		h.Dataset.ImportJSONL(w, r, r.PathValue("taskID"))
+	})
 	mux.HandleFunc("PUT /api/v1/tasks/{taskID}/examples/{exampleID}", func(w http.ResponseWriter, r *http.Request) {
 		h.Dataset.UpdateExample(w, r, r.PathValue("taskID"), r.PathValue("exampleID"))
 	})

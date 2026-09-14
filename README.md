@@ -38,10 +38,12 @@ A `Makefile` wraps both (`make run`, `make docker-build`, `make docker-run`).
 1. **New Task** — describe the task and pick a type
    (classification / extraction / generation).
 2. **Dataset tab** — paste `input -> output` example pairs, upload a CSV
-   (`input`/`output` columns), or generate synthetic variations to bootstrap
-   a small seed set. Distillery dedupes, flags low-quality rows, checks
-   label balance/readiness live, and lets you edit or delete individual
-   examples inline.
+   (`input`/`output` columns), upload a fine-tuning **JSONL** file
+   (Alpaca-style `{"instruction","input","output"}` or chat-style
+   `{"messages":[...]}` — format auto-detected), or generate synthetic
+   variations to bootstrap a small seed set. Distillery dedupes, flags
+   low-quality rows, checks label balance/readiness live, and lets you edit
+   or delete individual examples inline.
 3. **Fine-Tuning tab** — once the dataset is ready, start a run. Distillery
    auto-selects a right-sized base model from a curated catalog and runs a
    (simulated) LoRA/QLoRA fine-tune with live progress. Every completed run
@@ -97,6 +99,7 @@ POST   /api/v1/tasks
 GET    /api/v1/tasks/{taskID}
 POST   /api/v1/tasks/{taskID}/examples
 POST   /api/v1/tasks/{taskID}/examples/import        (bulk CSV upload)
+POST   /api/v1/tasks/{taskID}/examples/import-jsonl  (bulk Alpaca/chat JSONL upload)
 PUT    /api/v1/tasks/{taskID}/examples/{exampleID}    (edit one example)
 DELETE /api/v1/tasks/{taskID}/examples/{exampleID}
 POST   /api/v1/tasks/{taskID}/examples/synthetic

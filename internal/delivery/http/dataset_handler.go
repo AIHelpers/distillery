@@ -79,6 +79,28 @@ func (h *DatasetHandler) ImportCSV(w http.ResponseWriter, r *http.Request, taskI
 	writeJSON(w, http.StatusOK, stats)
 }
 
+// ImportJSONL bulk-loads Alpaca-style or chat-style JSONL dataset records from
+// an uploaded file's raw text body. An optional "format" query parameter
+// ("alpaca" or "chat") forces the parser; otherwise it auto-detects from the
+// first record.
+func (h *DatasetHandler) ImportJSONL(w http.ResponseWriter, r *http.Request, taskID string) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 20<<20)) // 20MB cap.
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read request body")
+		return
+	}
+
+	format := r.URL.Query().Get("format")
+
+	stats, err := h.uc.ImportJSONL(taskID, string(body), format)
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, stats)
+}
+
 func (h *DatasetHandler) UpdateExample(w http.ResponseWriter, r *http.Request, taskID, exampleID string) {
 	var req updateExampleRequest
 

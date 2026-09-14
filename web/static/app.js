@@ -243,6 +243,26 @@ Can I change my email on file? -> account"></textarea>
     </div>
 
     <div class="card">
+      <h3>Import from JSONL (Alpaca / chat)</h3>
+      <p class="hint">Upload a fine-tuning JSONL dataset. Supports
+      <span class="source-tag">Alpaca</span> style
+      (<code>{"instruction","input","output"}</code>) and
+      <span class="source-tag">chat</span> style
+      (<code>{"messages":[{"role","content"},...]}</code>). Format is
+      auto-detected from the first record.</p>
+      <div class="inline-form" style="align-items:center;">
+        <label>Format</label>
+        <select id="jsonl-format" style="width:auto;background:var(--charcoal);color:var(--paper);border:1px solid var(--charcoal-3);border-radius:3px;padding:8px 10px;font-family:var(--font-mono);font-size:13px;">
+          <option value="">Auto-detect</option>
+          <option value="alpaca">Alpaca</option>
+          <option value="chat">Chat</option>
+        </select>
+        <input type="file" id="jsonl-file-input" accept=".jsonl,.jsonl.gz,application/jsonl,application/x-ndjson" />
+      </div>
+      <div class="hint" id="jsonl-file-status"></div>
+    </div>
+
+    <div class="card">
       <h3>Bootstrap synthetic examples</h3>
       <p class="hint">Generate additional training pairs from your existing examples to help
       the model generalize (simulates calling a frontier model to expand a handful of seeds).</p>
@@ -312,6 +332,25 @@ Can I change my email on file? -> account"></textarea>
       const res = await apiRawOrThrow("POST", `/tasks/${task.id}/examples/import`, text, { "Content-Type": "text/csv" });
       const stats = await res.json();
       toast(`Imported CSV — dataset now has ${stats.total} example(s).`);
+      renderDatasetPanel(task);
+    } catch (err) {
+      statusEl.textContent = "";
+      toast(err.message, true);
+    }
+  };
+
+  document.getElementById("jsonl-file-input").onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const statusEl = document.getElementById("jsonl-file-status");
+    statusEl.textContent = "Importing…";
+    const format = document.getElementById("jsonl-format").value;
+    try {
+      const text = await file.text();
+      const url = `/tasks/${task.id}/examples/import-jsonl` + (format ? `?format=${encodeURIComponent(format)}` : "");
+      const res = await apiRawOrThrow("POST", url, text, { "Content-Type": "application/x-ndjson" });
+      const stats = await res.json();
+      toast(`Imported JSONL — dataset now has ${stats.total} example(s).`);
       renderDatasetPanel(task);
     } catch (err) {
       statusEl.textContent = "";
@@ -843,6 +882,7 @@ async function renderDocsPanel(task) {
           <tr><td>POST</td><td>/api/v1/tasks</td><td>Create a task</td></tr>
           <tr><td>POST</td><td>/api/v1/tasks/{id}/examples</td><td>Add example pairs</td></tr>
           <tr><td>POST</td><td>/api/v1/tasks/{id}/examples/import</td><td>Bulk import CSV</td></tr>
+          <tr><td>POST</td><td>/api/v1/tasks/{id}/examples/import-jsonl</td><td>Bulk import Alpaca/chat JSONL</td></tr>
           <tr><td>POST</td><td>/api/v1/tasks/{id}/training</td><td>Start a fine-tuning run</td></tr>
           <tr><td>POST</td><td>/api/v1/tasks/{id}/deploy</td><td>Deploy the latest model (returns a one-time API key)</td></tr>
           <tr><td>POST</td><td>/api/v1/tasks/{id}/training/{jobId}/deploy</td><td>Deploy a specific version (rollback)</td></tr>

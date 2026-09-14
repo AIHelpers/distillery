@@ -9,6 +9,7 @@
 package main
 
 import (
+	"flag"
 	"log"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"runtime"
 
 	deliveryhttp "distillery/internal/delivery/http"
+	"distillery/internal/exhaustruct"
 	infraagent "distillery/internal/infra/agent"
 	"distillery/internal/infra/simulation"
 	"distillery/internal/repository/memory"
@@ -24,6 +26,14 @@ import (
 )
 
 func main() {
+	exhaustructFlag := flag.Bool("exhaustruct", false, "run the exhaustruct struct-rewrite tool and exit")
+	flag.Parse()
+
+	if *exhaustructFlag {
+		runExhaustruct()
+		return
+	}
+
 	port := envOr("PORT", "8080")
 	dataPath := envOr("DATA_PATH", "./data/distillery.json")
 	openBrowser := envOr("OPEN_BROWSER", "auto") // auto|true|false.
@@ -98,6 +108,17 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+// runExhaustruct rewrites composite literals of enforced struct types in the
+// internal tree and exits.
+func runExhaustruct() {
+	total, err := exhaustruct.Run("internal")
+	if err != nil {
+		log.Fatalf("exhaustruct: %v", err)
+	}
+
+	log.Printf("exhaustruct: rewrote %d file(s)", total)
 }
 
 func envOr(key, def string) string {

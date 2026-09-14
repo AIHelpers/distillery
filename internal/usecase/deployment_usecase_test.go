@@ -6,6 +6,7 @@ import (
 
 	"distillery/internal/domain"
 	"distillery/internal/usecase"
+	time "time"
 )
 
 func newDeploymentUsecase(
@@ -24,9 +25,9 @@ func newDeploymentUsecase(
 func TestDeploymentUsecase_Deploy_Success(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	jobs := &mockTrainingRepo{
-		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted},
+		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
 	}
 	deployments := &mockDeploymentRepo{}
 	uc := newDeploymentUsecase(tasks, jobs, &mockExampleRepo{}, deployments, &mockInferenceEngine{}, &mockExporter{})
@@ -102,7 +103,7 @@ func TestDeploymentUsecase_Deploy_TaskNotFound(t *testing.T) {
 func TestDeploymentUsecase_Deploy_NoCompletedModel(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	uc := newDeploymentUsecase(
 		tasks,
 		&mockTrainingRepo{},
@@ -140,7 +141,7 @@ func TestDeploymentUsecase_Deploy_TaskRepoError(t *testing.T) {
 func TestDeploymentUsecase_Deploy_LatestCompletedError(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	jobs := &mockTrainingRepo{err: errRepoFailure}
 	uc := newDeploymentUsecase(
 		tasks,
@@ -160,9 +161,9 @@ func TestDeploymentUsecase_Deploy_LatestCompletedError(t *testing.T) {
 func TestDeploymentUsecase_Deploy_CreateError(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	jobs := &mockTrainingRepo{
-		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted},
+		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
 	}
 	deployments := &mockDeploymentRepo{err: errRepoFailure}
 	uc := newDeploymentUsecase(tasks, jobs, &mockExampleRepo{}, deployments, &mockInferenceEngine{}, &mockExporter{})
@@ -176,11 +177,11 @@ func TestDeploymentUsecase_Deploy_CreateError(t *testing.T) {
 func TestDeploymentUsecase_Deploy_StopsExistingActive(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	jobs := &mockTrainingRepo{
-		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted},
+		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
 	}
-	existing := &domain.Deployment{ID: "dep_old", TaskID: "task_1", Status: domain.DeploymentActive}
+	existing := &domain.Deployment{ID: "dep_old", TaskID: "task_1", Status: domain.DeploymentActive, TrainingJobID: "", Endpoint: "", Autoscale: false, RequestCount: 0, APIKeyHash: "", CreatedAt: time.Time{}}
 	deployments := &mockDeploymentRepo{active: existing}
 	uc := newDeploymentUsecase(tasks, jobs, &mockExampleRepo{}, deployments, &mockInferenceEngine{}, &mockExporter{})
 
@@ -203,9 +204,9 @@ func TestDeploymentUsecase_Deploy_StopsExistingActive(t *testing.T) {
 func TestDeploymentUsecase_DeployVersion_Success(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	jobs := &mockTrainingRepo{
-		job: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted},
+		job: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
 	}
 	deployments := &mockDeploymentRepo{}
 	uc := newDeploymentUsecase(tasks, jobs, &mockExampleRepo{}, deployments, &mockInferenceEngine{}, &mockExporter{})
@@ -245,7 +246,7 @@ func TestDeploymentUsecase_DeployVersion_TaskNotFound(t *testing.T) {
 func TestDeploymentUsecase_DeployVersion_JobNotFound(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	uc := newDeploymentUsecase(
 		tasks,
 		&mockTrainingRepo{},
@@ -264,9 +265,9 @@ func TestDeploymentUsecase_DeployVersion_JobNotFound(t *testing.T) {
 func TestDeploymentUsecase_DeployVersion_TaskMismatch(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	jobs := &mockTrainingRepo{
-		job: &domain.TrainingJob{ID: "job_1", TaskID: "other_task", Status: domain.TrainingCompleted},
+		job: &domain.TrainingJob{ID: "job_1", TaskID: "other_task", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
 	}
 	uc := newDeploymentUsecase(
 		tasks,
@@ -286,9 +287,9 @@ func TestDeploymentUsecase_DeployVersion_TaskMismatch(t *testing.T) {
 func TestDeploymentUsecase_DeployVersion_NotCompleted(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	jobs := &mockTrainingRepo{
-		job: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingRunning},
+		job: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingRunning, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
 	}
 	uc := newDeploymentUsecase(
 		tasks,
@@ -308,7 +309,7 @@ func TestDeploymentUsecase_DeployVersion_NotCompleted(t *testing.T) {
 func TestDeploymentUsecase_DeployVersion_JobRepoError(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	jobs := &mockTrainingRepo{err: errRepoFailure}
 	uc := newDeploymentUsecase(
 		tasks,
@@ -331,7 +332,7 @@ func TestDeploymentUsecase_GetActiveDeployment_Success(t *testing.T) {
 	t.Parallel()
 
 	deployments := &mockDeploymentRepo{
-		active: &domain.Deployment{ID: "dep_1", TaskID: "task_1", Status: domain.DeploymentActive},
+		active: &domain.Deployment{ID: "dep_1", TaskID: "task_1", Status: domain.DeploymentActive, TrainingJobID: "", Endpoint: "", Autoscale: false, RequestCount: 0, APIKeyHash: "", CreatedAt: time.Time{}},
 	}
 	uc := newDeploymentUsecase(
 		&mockTaskRepo{},
@@ -509,10 +510,10 @@ func TestDeploymentUsecase_StopDeployment_RepoError(t *testing.T) {
 func TestDeploymentUsecase_Invoke_Success(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	jobs := &mockTrainingRepo{
-		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted},
-		job:             &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted},
+		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
+		job:             &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
 	}
 	examples := &mockExampleRepo{
 		byTask: []*domain.Example{
@@ -577,7 +578,7 @@ func TestDeploymentUsecase_Invoke_EmptyAPIKey(t *testing.T) {
 	t.Parallel()
 
 	deployments := &mockDeploymentRepo{
-		getDeployment: &domain.Deployment{ID: "dep_1", Status: domain.DeploymentActive, APIKeyHash: "hash"},
+		getDeployment: &domain.Deployment{ID: "dep_1", Status: domain.DeploymentActive, APIKeyHash: "hash", TaskID: "", TrainingJobID: "", Endpoint: "", Autoscale: false, RequestCount: 0, CreatedAt: time.Time{}},
 	}
 	uc := newDeploymentUsecase(
 		&mockTaskRepo{},
@@ -598,7 +599,7 @@ func TestDeploymentUsecaseInvoke_EmptyHash(t *testing.T) {
 	t.Parallel()
 
 	deployments := &mockDeploymentRepo{
-		getDeployment: &domain.Deployment{ID: "dep_1", Status: domain.DeploymentActive, APIKeyHash: ""},
+		getDeployment: &domain.Deployment{ID: "dep_1", Status: domain.DeploymentActive, APIKeyHash: "", TaskID: "", TrainingJobID: "", Endpoint: "", Autoscale: false, RequestCount: 0, CreatedAt: time.Time{}},
 	}
 	uc := newDeploymentUsecase(
 		&mockTaskRepo{},
@@ -619,7 +620,7 @@ func TestDeploymentUsecase_Invoke_WrongAPIKey(t *testing.T) {
 	t.Parallel()
 
 	deployments := &mockDeploymentRepo{
-		getDeployment: &domain.Deployment{ID: "dep_1", Status: domain.DeploymentActive, APIKeyHash: "somehash"},
+		getDeployment: &domain.Deployment{ID: "dep_1", Status: domain.DeploymentActive, APIKeyHash: "somehash", TaskID: "", TrainingJobID: "", Endpoint: "", Autoscale: false, RequestCount: 0, CreatedAt: time.Time{}},
 	}
 	uc := newDeploymentUsecase(
 		&mockTaskRepo{},
@@ -640,9 +641,9 @@ func TestDeploymentUsecase_Invoke_InactiveDeployment(t *testing.T) {
 	t.Parallel()
 
 	// Deploy to get a valid key, then stop the deployment.
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	jobs := &mockTrainingRepo{
-		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted},
+		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
 	}
 	deployments := &mockDeploymentRepo{}
 	uc := newDeploymentUsecase(tasks, jobs, &mockExampleRepo{}, deployments, &mockInferenceEngine{}, &mockExporter{})
@@ -663,9 +664,9 @@ func TestDeploymentUsecase_Invoke_InactiveDeployment(t *testing.T) {
 func TestDeploymentUsecase_Invoke_JobNotFound(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	jobs := &mockTrainingRepo{
-		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted},
+		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
 	}
 	deployments := &mockDeploymentRepo{}
 	uc := newDeploymentUsecase(tasks, jobs, &mockExampleRepo{}, deployments, &mockInferenceEngine{}, &mockExporter{})
@@ -688,10 +689,10 @@ func TestDeploymentUsecase_Invoke_JobNotFound(t *testing.T) {
 func TestDeploymentUsecase_Invoke_ExamplesError(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	jobs := &mockTrainingRepo{
-		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted},
-		job:             &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted},
+		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
+		job:             &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
 	}
 	examples := &mockExampleRepo{err: errRepoFailure}
 	deployments := &mockDeploymentRepo{}
@@ -732,10 +733,10 @@ func TestDeploymentUsecase_Invoke_DeploymentRepoError(t *testing.T) {
 func TestDeploymentUsecase_InvokeBatch_Success(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	jobs := &mockTrainingRepo{
-		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted},
-		job:             &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted},
+		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
+		job:             &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
 	}
 	examples := &mockExampleRepo{
 		byTask: []*domain.Example{
@@ -803,7 +804,7 @@ func TestDeploymentUsecase_InvokeBatch_Unauthorized(t *testing.T) {
 	t.Parallel()
 
 	deployments := &mockDeploymentRepo{
-		getDeployment: &domain.Deployment{ID: "dep_1", Status: domain.DeploymentActive, APIKeyHash: "hash"},
+		getDeployment: &domain.Deployment{ID: "dep_1", Status: domain.DeploymentActive, APIKeyHash: "hash", TaskID: "", TrainingJobID: "", Endpoint: "", Autoscale: false, RequestCount: 0, CreatedAt: time.Time{}},
 	}
 	uc := newDeploymentUsecase(
 		&mockTaskRepo{},
@@ -823,9 +824,9 @@ func TestDeploymentUsecase_InvokeBatch_Unauthorized(t *testing.T) {
 func TestDeploymentUsecase_InvokeBatch_Inactive(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	jobs := &mockTrainingRepo{
-		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted},
+		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
 	}
 	deployments := &mockDeploymentRepo{}
 	uc := newDeploymentUsecase(tasks, jobs, &mockExampleRepo{}, deployments, &mockInferenceEngine{}, &mockExporter{})
@@ -846,9 +847,9 @@ func TestDeploymentUsecase_InvokeBatch_Inactive(t *testing.T) {
 func TestDeploymentUsecase_InvokeBatch_JobNotFound(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	jobs := &mockTrainingRepo{
-		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted},
+		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
 	}
 	deployments := &mockDeploymentRepo{}
 	uc := newDeploymentUsecase(tasks, jobs, &mockExampleRepo{}, deployments, &mockInferenceEngine{}, &mockExporter{})
@@ -870,10 +871,10 @@ func TestDeploymentUsecase_InvokeBatch_JobNotFound(t *testing.T) {
 func TestDeploymentUsecase_InvokeBatch_ExamplesError(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	jobs := &mockTrainingRepo{
-		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted},
-		job:             &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted},
+		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
+		job:             &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
 	}
 	examples := &mockExampleRepo{err: errRepoFailure}
 	deployments := &mockDeploymentRepo{}
@@ -893,10 +894,10 @@ func TestDeploymentUsecase_InvokeBatch_ExamplesError(t *testing.T) {
 func TestDeploymentUsecase_InvokeBatch_EmptyInputs(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	jobs := &mockTrainingRepo{
-		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted},
-		job:             &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted},
+		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
+		job:             &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
 	}
 	deployments := &mockDeploymentRepo{}
 	engine := &mockInferenceEngine{}
@@ -926,9 +927,9 @@ func TestDeploymentUsecase_InvokeBatch_EmptyInputs(t *testing.T) {
 func TestDeploymentUsecase_Export_Success(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "My Task"}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "My Task", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	jobs := &mockTrainingRepo{
-		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted},
+		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
 	}
 	exporter := &mockExporter{bytes: []byte("archive"), filename: "export.zip"}
 	uc := newDeploymentUsecase(tasks, jobs, &mockExampleRepo{}, &mockDeploymentRepo{}, &mockInferenceEngine{}, exporter)
@@ -972,7 +973,7 @@ func TestDeploymentUsecase_Export_TaskNotFound(t *testing.T) {
 func TestDeploymentUsecase_Export_NoCompletedModel(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	uc := newDeploymentUsecase(
 		tasks,
 		&mockTrainingRepo{},
@@ -1010,7 +1011,7 @@ func TestDeploymentUsecase_Export_TaskRepoError(t *testing.T) {
 func TestDeploymentUsecase_Export_LatestCompletedError(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	jobs := &mockTrainingRepo{err: errRepoFailure}
 	uc := newDeploymentUsecase(
 		tasks,
@@ -1030,9 +1031,9 @@ func TestDeploymentUsecase_Export_LatestCompletedError(t *testing.T) {
 func TestDeploymentUsecase_Export_ExporterError(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	jobs := &mockTrainingRepo{
-		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted},
+		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
 	}
 	exporter := &mockExporter{err: errRepoFailure}
 	uc := newDeploymentUsecase(tasks, jobs, &mockExampleRepo{}, &mockDeploymentRepo{}, &mockInferenceEngine{}, exporter)

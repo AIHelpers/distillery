@@ -13,5 +13,141 @@
   "training_jobs": {},
   "deployments": {},
   "feedback": {},
-  "agents": {}
+  "agents": {
+    "fta_2c6aa76f2843": {
+      "id": "fta_2c6aa76f2843",
+      "status": "done",
+      "current_task": "Fine-tune model gpt2 on dataset 11111 for task 1111.",
+      "progress": 100,
+      "tool_calls": [
+        {
+          "id": "call_40261",
+          "tool_name": "model_selector",
+          "input": {
+            "baseModel": "gpt2",
+            "datasetID": "default",
+            "taskType": "classification"
+          },
+          "status": "success",
+          "output": {
+            "result": {
+              "modelID": "gpt2-medium",
+              "reasoning": "Selected based on task type and resource constraints"
+            }
+          }
+        },
+        {
+          "id": "call_96329",
+          "tool_name": "model_selector",
+          "input": {
+            "baseModel": "gpt2",
+            "datasetID": "default",
+            "taskType": "classification"
+          },
+          "status": "success",
+          "output": {
+            "result": {
+              "modelID": "gpt2-medium",
+              "reasoning": "Selected based on task type and resource constraints"
+            }
+          }
+        },
+        {
+          "id": "call_17661",
+          "tool_name": "training_controller",
+          "input": {
+            "baseModel": "gpt2",
+            "datasetID": "default",
+            "taskType": "classification"
+          },
+          "status": "success",
+          "output": {
+            "result": {
+              "message": "Training job initiated (simulated)",
+              "status": "started",
+              "taskID": "job_sim_1"
+            }
+          }
+        }
+      ],
+      "history": [
+        {
+          "role": "assistant",
+          "content": "Iteration 1: executing next tool",
+          "tool_calls": [
+            {
+              "id": "call_40261",
+              "tool_name": "model_selector",
+              "input": {
+                "baseModel": "gpt2",
+                "datasetID": "default",
+                "taskType": "classification"
+              },
+              "status": "success",
+              "output": {
+                "result": {
+                  "modelID": "gpt2-medium",
+                  "reasoning": "Selected based on task type and resource constraints"
+                }
+              }
+            }
+          ],
+          "timestamp": "2026-09-14T21:09:16.7582648+03:00"
+        },
+        {
+          "role": "assistant",
+          "content": "Iteration 2: executing next tool",
+          "tool_calls": [
+            {
+              "id": "call_96329",
+              "tool_name": "model_selector",
+              "input": {
+                "baseModel": "gpt2",
+                "datasetID": "default",
+                "taskType": "classification"
+              },
+              "status": "success",
+              "output": {
+                "result": {
+                  "modelID": "gpt2-medium",
+                  "reasoning": "Selected based on task type and resource constraints"
+                }
+              }
+            }
+          ],
+          "timestamp": "2026-09-14T21:09:16.7587834+03:00"
+        },
+        {
+          "role": "assistant",
+          "content": "Iteration 3: executing next tool",
+          "tool_calls": [
+            {
+              "id": "call_17661",
+              "tool_name": "training_controller",
+              "input": {
+                "baseModel": "gpt2",
+                "datasetID": "default",
+                "taskType": "classification"
+              },
+              "status": "success",
+              "output": {
+                "result": {
+                  "message": "Training job initiated (simulated)",
+                  "status": "started",
+                  "taskID": "job_sim_1"
+                }
+              }
+            }
+          ],
+          "timestamp": "2026-09-14T21:09:16.7588269+03:00"
+        }
+      ],
+      "last_activity": "2026-09-14T21:09:16.7588269+03:00",
+      "metadata": {}
+    }
+  },
+  "finetune_requests": [],
+  "finetune_jobs": [],
+  "trained_models": [],
+  "datasets": []
 }

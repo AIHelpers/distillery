@@ -7,6 +7,7 @@ import (
 
 	"distillery/internal/domain"
 	"distillery/internal/usecase"
+	time "time"
 )
 
 func newFinetuneUsecase(
@@ -30,8 +31,8 @@ func sampleFineTuneRequest() *domain.FineTuneRequest {
 		TrainingParams: domain.TrainingParameters{
 			Epochs:       3,
 			BatchSize:    8,
-			LearningRate: 5e-5,
-		},
+			LearningRate: 5e-5, WarmupSteps: 0, MaxSequenceLength: 0, GradientAccumSteps: 0, WeightDecay: 0, SchedulerType: "", OptimizerType: "", PreserveSyntax: false, ContextWindow: 0, BalancedSampling: false,
+		}, ID: "", Description: "", ValidationParams: domain.ValidationParameters{}, Status: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{},
 	}
 }
 
@@ -296,7 +297,7 @@ func TestFineTuneUsecase_Insights(t *testing.T) {
 
 	agent := &mockCodingAgent{insights: domain.AgentInsights{
 		Phase:   "training",
-		Summary: "loss decreasing steadily",
+		Summary: "loss decreasing steadily", Metrics: nil, Warnings: nil, NextSteps: nil, EstimatedQuality: "",
 	}}
 	uc := newFinetuneUsecase(agent, &mockFTReqRepo{}, &mockFTJobRepo{}, &mockFTModelRepo{}, &mockFTDatasetRepo{})
 
@@ -316,7 +317,7 @@ func TestFineTuneUsecase_QualityReport(t *testing.T) {
 	agent := &mockCodingAgent{qualityReport: domain.QualityReport{
 		TrainingComplete: true,
 		FinalLoss:        1.2,
-		OverallQuality:   "good",
+		OverallQuality:   "good", BestMetrics: nil, CodeExecutability: 0, SyntaxValidity: 0, Issues: nil, Recommendations: nil,
 	}}
 	uc := newFinetuneUsecase(agent, &mockFTReqRepo{}, &mockFTJobRepo{}, &mockFTModelRepo{}, &mockFTDatasetRepo{})
 
@@ -435,7 +436,7 @@ func TestFineTuneUsecase_RegisterDataset_Valid(t *testing.T) {
 	d := &domain.DatasetInfo{
 		Name:     "Python Corpus",
 		Language: domain.LangPython,
-		Owner:    "user_1",
+		Owner:    "user_1", ID: "", FileCount: 0, TotalSize: 0, TotalLines: 0, TotalTokens: 0, SampleCount: 0, Quality: domain.DatasetQuality{OverallScore: 0, ValidityRate: 0, ComplexityScore: 0, Issues: nil}, Status: "", CreatedAt: time.Time{},
 	}
 
 	id, err := uc.RegisterDataset(d)
@@ -465,7 +466,7 @@ func TestFineTuneUsecase_RegisterDataset_UnsupportedLanguage(t *testing.T) {
 	d := &domain.DatasetInfo{
 		Name:     "Unknown Lang",
 		Language: domain.ProgrammingLanguage("lisp"),
-		Owner:    "user_1",
+		Owner:    "user_1", ID: "", FileCount: 0, TotalSize: 0, TotalLines: 0, TotalTokens: 0, SampleCount: 0, Quality: domain.DatasetQuality{OverallScore: 0, ValidityRate: 0, ComplexityScore: 0, Issues: nil}, Status: "", CreatedAt: time.Time{},
 	}
 
 	id, err := uc.RegisterDataset(d)
@@ -490,7 +491,7 @@ func TestFineTuneUsecase_RegisterDataset_EmptyName(t *testing.T) {
 	d := &domain.DatasetInfo{
 		Name:     "",
 		Language: domain.LangPython,
-		Owner:    "user_1",
+		Owner:    "user_1", ID: "", FileCount: 0, TotalSize: 0, TotalLines: 0, TotalTokens: 0, SampleCount: 0, Quality: domain.DatasetQuality{OverallScore: 0, ValidityRate: 0, ComplexityScore: 0, Issues: nil}, Status: "", CreatedAt: time.Time{},
 	}
 
 	_, err := uc.RegisterDataset(d)
@@ -507,7 +508,7 @@ func TestFineTuneUsecase_RegisterDataset_EmptyLanguage(t *testing.T) {
 	d := &domain.DatasetInfo{
 		Name:     "Test",
 		Language: "",
-		Owner:    "user_1",
+		Owner:    "user_1", ID: "", FileCount: 0, TotalSize: 0, TotalLines: 0, TotalTokens: 0, SampleCount: 0, Quality: domain.DatasetQuality{OverallScore: 0, ValidityRate: 0, ComplexityScore: 0, Issues: nil}, Status: "", CreatedAt: time.Time{},
 	}
 
 	_, err := uc.RegisterDataset(d)
@@ -524,7 +525,7 @@ func TestFineTuneUsecase_RegisterDataset_EmptyOwner(t *testing.T) {
 	d := &domain.DatasetInfo{
 		Name:     "Test",
 		Language: domain.LangPython,
-		Owner:    "",
+		Owner:    "", ID: "", FileCount: 0, TotalSize: 0, TotalLines: 0, TotalTokens: 0, SampleCount: 0, Quality: domain.DatasetQuality{OverallScore: 0, ValidityRate: 0, ComplexityScore: 0, Issues: nil}, Status: "", CreatedAt: time.Time{},
 	}
 
 	_, err := uc.RegisterDataset(d)
@@ -586,7 +587,7 @@ func TestFineTuneUsecase_AnalyseDataset(t *testing.T) {
 	agent := &mockCodingAgent{analysis: domain.DatasetAnalysis{
 		FileCount:        500,
 		QualityScore:     85.0,
-		ReadyForTraining: true,
+		ReadyForTraining: true, TotalSize: 0, TotalTokens: 0, LanguageCoverage: nil, ComplexityRange: [2]int{}, AverageComplexity: 0, SyntaxValidityRate: 0, Recommendations: nil,
 	}}
 	uc := newFinetuneUsecase(agent, &mockFTReqRepo{}, &mockFTJobRepo{}, &mockFTModelRepo{}, &mockFTDatasetRepo{})
 
@@ -613,14 +614,14 @@ func TestFineTuneUsecase_RecommendHyperparameters(t *testing.T) {
 		LearningRate:  3e-5,
 		WarmupSteps:   100,
 		WeightDecay:   0.01,
-		SchedulerType: "cosine",
+		SchedulerType: "cosine", MaxSequenceLength: 0, GradientAccumSteps: 0, OptimizerType: "", PreserveSyntax: false, ContextWindow: 0, BalancedSampling: false,
 	}}
 	uc := newFinetuneUsecase(agent, &mockFTReqRepo{}, &mockFTJobRepo{}, &mockFTModelRepo{}, &mockFTDatasetRepo{})
 
 	params, err := uc.RecommendHyperparameters(context.Background(), domain.HyperparameterRecommendationReq{
 		Language:    domain.LangPython,
 		Skill:       domain.SkillCodeCompletion,
-		DatasetSize: 100000,
+		DatasetSize: 100000, AvailableGPU: 0,
 	})
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
