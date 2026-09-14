@@ -15,12 +15,16 @@ import (
 
 // snapshot is the full application state, serialized as one JSON document.
 type snapshot struct {
-	Tasks        map[string]*domain.Task            `json:"tasks"`
-	Examples     map[string][]*domain.Example       `json:"examples"`      // keyed by task ID.
-	TrainingJobs map[string][]*domain.TrainingJob   `json:"training_jobs"` // keyed by task ID.
-	Deployments  map[string][]*domain.Deployment    `json:"deployments"`   // keyed by task ID.
-	Feedback     map[string][]*domain.Misprediction `json:"feedback"`      // keyed by task ID.
-	Agents       map[string]domain.AgentState       `json:"agents"`
+	Tasks            map[string]*domain.Task            `json:"tasks"`
+	Examples         map[string][]*domain.Example       `json:"examples"`      // keyed by task ID.
+	TrainingJobs     map[string][]*domain.TrainingJob   `json:"training_jobs"` // keyed by task ID.
+	Deployments      map[string][]*domain.Deployment    `json:"deployments"`   // keyed by task ID.
+	Feedback         map[string][]*domain.Misprediction `json:"feedback"`      // keyed by task ID.
+	Agents           map[string]domain.AgentState       `json:"agents"`
+	FineTuneRequests []*domain.FineTuneRequest          `json:"finetune_requests"`
+	FineTuneJobs     []*domain.FineTuneJob              `json:"finetune_jobs"`
+	TrainedModels    []*domain.TrainedModel             `json:"trained_models"`
+	Datasets         []*domain.DatasetInfo              `json:"datasets"`
 }
 
 // Store is the shared in-memory database backing all repositories, with
@@ -29,25 +33,33 @@ type Store struct {
 	mu   sync.RWMutex
 	path string
 
-	Tasks        map[string]*domain.Task
-	Examples     map[string][]*domain.Example
-	TrainingJobs map[string][]*domain.TrainingJob
-	Deployments  map[string][]*domain.Deployment
-	Feedback     map[string][]*domain.Misprediction
-	Agents       map[string]domain.AgentState
+	Tasks            map[string]*domain.Task
+	Examples         map[string][]*domain.Example
+	TrainingJobs     map[string][]*domain.TrainingJob
+	Deployments      map[string][]*domain.Deployment
+	Feedback         map[string][]*domain.Misprediction
+	Agents           map[string]domain.AgentState
+	FineTuneRequests []*domain.FineTuneRequest
+	FineTuneJobs     []*domain.FineTuneJob
+	TrainedModels    []*domain.TrainedModel
+	Datasets         []*domain.DatasetInfo
 }
 
 // NewStore creates a store. If path is non-empty and an existing snapshot
 // is found there, it is loaded; otherwise a fresh in-memory store is used.
 func NewStore(path string) *Store {
 	s := &Store{
-		path:         path,
-		Tasks:        map[string]*domain.Task{},
-		Examples:     map[string][]*domain.Example{},
-		TrainingJobs: map[string][]*domain.TrainingJob{},
-		Deployments:  map[string][]*domain.Deployment{},
-		Feedback:     map[string][]*domain.Misprediction{},
-		Agents:       map[string]domain.AgentState{},
+		path:             path,
+		Tasks:            map[string]*domain.Task{},
+		Examples:         map[string][]*domain.Example{},
+		TrainingJobs:     map[string][]*domain.TrainingJob{},
+		Deployments:      map[string][]*domain.Deployment{},
+		Feedback:         map[string][]*domain.Misprediction{},
+		Agents:           map[string]domain.AgentState{},
+		FineTuneRequests: []*domain.FineTuneRequest{},
+		FineTuneJobs:     []*domain.FineTuneJob{},
+		TrainedModels:    []*domain.TrainedModel{},
+		Datasets:         []*domain.DatasetInfo{},
 	}
 	s.load()
 	return s
@@ -83,6 +95,18 @@ func (s *Store) load() {
 	if snap.Agents != nil {
 		s.Agents = snap.Agents
 	}
+	if snap.FineTuneRequests != nil {
+		s.FineTuneRequests = snap.FineTuneRequests
+	}
+	if snap.FineTuneJobs != nil {
+		s.FineTuneJobs = snap.FineTuneJobs
+	}
+	if snap.TrainedModels != nil {
+		s.TrainedModels = snap.TrainedModels
+	}
+	if snap.Datasets != nil {
+		s.Datasets = snap.Datasets
+	}
 }
 
 // persist writes the current state to disk. Caller must hold s.mu (read or write).
@@ -91,12 +115,16 @@ func (s *Store) persist() {
 		return
 	}
 	snap := snapshot{
-		Tasks:        s.Tasks,
-		Examples:     s.Examples,
-		TrainingJobs: s.TrainingJobs,
-		Deployments:  s.Deployments,
-		Feedback:     s.Feedback,
-		Agents:       s.Agents,
+		Tasks:            s.Tasks,
+		Examples:         s.Examples,
+		TrainingJobs:     s.TrainingJobs,
+		Deployments:      s.Deployments,
+		Feedback:         s.Feedback,
+		Agents:           s.Agents,
+		FineTuneRequests: s.FineTuneRequests,
+		FineTuneJobs:     s.FineTuneJobs,
+		TrainedModels:    s.TrainedModels,
+		Datasets:         s.Datasets,
 	}
 	b, err := json.MarshalIndent(snap, "", "  ")
 	if err != nil {

@@ -36,6 +36,10 @@ func main() {
 	deploymentRepo := memory.NewDeploymentRepo(store)
 	feedbackRepo := memory.NewFeedbackRepo(store)
 	agentRepo := memory.NewAgentRepo(store)
+	ftReqRepo := memory.NewFineTuneRequestRepo(store)
+	ftJobRepo := memory.NewFineTuneJobRepo(store)
+	ftModelRepo := memory.NewTrainedModelRepo(store)
+	ftDatasetRepo := memory.NewDatasetRepo(store)
 
 	// --- Simulated infra (stands in for GPU orchestration / model serving) ---.
 	modelSelector := simulation.NewModelSelector()
@@ -64,6 +68,10 @@ func main() {
 	llmProvider := infraagent.NewSimulatedLLMProvider()
 	agentOrchUC := usecase.NewAgentOrchestrationUsecase(agentRepo, toolReg, llmProvider, taskRepo, idGen)
 
+	// --- Coding AI Agent (fine-tuning) ---.
+	codingAgent := infraagent.NewCodingAgent(ftReqRepo, ftJobRepo, ftDatasetRepo, ftModelRepo)
+	ftUC := usecase.NewFineTuneUsecase(codingAgent, ftReqRepo, ftJobRepo, ftModelRepo, ftDatasetRepo, idGen)
+
 	// --- Delivery ---.
 	handlers := deliveryhttp.Handlers{
 		Task:       deliveryhttp.NewTaskHandler(taskUC),
@@ -72,6 +80,7 @@ func main() {
 		Deployment: deliveryhttp.NewDeploymentHandler(deploymentUC),
 		Feedback:   deliveryhttp.NewFeedbackHandler(feedbackUC),
 		Agent:      deliveryhttp.NewAgentHandler(agentOrchUC),
+		FineTune:   deliveryhttp.NewFineTuneHandler(ftUC),
 	}
 	router := deliveryhttp.NewRouter(handlers, web.FS())
 
