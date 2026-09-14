@@ -46,11 +46,13 @@ func (u *TrainingUsecase) StartTraining(taskID string) (*domain.TrainingJob, err
 	if err != nil {
 		return nil, err
 	}
+
 	for _, j := range existingJobs {
 		if j.Status == domain.TrainingQueued || j.Status == domain.TrainingRunning {
 			return nil, domain.ErrAlreadyRunning
 		}
 	}
+
 	version := 1
 	for _, j := range existingJobs {
 		if j.Version >= version {
@@ -62,24 +64,31 @@ func (u *TrainingUsecase) StartTraining(taskID string) (*domain.TrainingJob, err
 	if err != nil {
 		return nil, err
 	}
+
 	var usable []*domain.Example
+
 	totalIn, totalOut := 0, 0
+
 	for _, e := range all {
 		if e.Duplicate || e.Flagged {
 			continue
 		}
+
 		usable = append(usable, e)
 		totalIn += len(e.Input)
 		totalOut += len(e.Output)
 	}
+
 	if len(usable) < 3 {
 		return nil, domain.ErrNotReady
 	}
+
 	avgIn, avgOut := totalIn/len(usable), totalOut/len(usable)
 
 	base := u.selector.SelectBaseModel(task, len(usable), avgIn, avgOut)
 
 	now := time.Now().UTC()
+
 	job := &domain.TrainingJob{
 		ID:        u.idGen.NewID("job"),
 		TaskID:    taskID,
@@ -88,9 +97,11 @@ func (u *TrainingUsecase) StartTraining(taskID string) (*domain.TrainingJob, err
 		Status:    domain.TrainingRunning,
 		Progress:  0,
 		CreatedAt: now,
-		StartedAt: &now,
+		StartedAt: &now, Metrics: nil, Error: "", CompletedAt: nil,
 	}
-	if err := u.jobs.Create(job); err != nil {
+
+	err = u.jobs.Create(job)
+	if err != nil {
 		return nil, err
 	}
 
@@ -101,6 +112,7 @@ func (u *TrainingUsecase) StartTraining(taskID string) (*domain.TrainingJob, err
 		},
 		func(metrics *domain.TrainingMetrics, err error) {
 			completed := time.Now().UTC()
+
 			job.CompletedAt = &completed
 			if err != nil {
 				job.Status = domain.TrainingFailed
@@ -110,6 +122,7 @@ func (u *TrainingUsecase) StartTraining(taskID string) (*domain.TrainingJob, err
 				job.Progress = 100
 				job.Metrics = metrics
 			}
+
 			_ = u.jobs.Update(job)
 		},
 	)

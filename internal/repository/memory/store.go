@@ -62,6 +62,7 @@ func NewStore(path string) *Store {
 		Datasets:         []*domain.DatasetInfo{},
 	}
 	s.load()
+
 	return s
 }
 
@@ -69,41 +70,55 @@ func (s *Store) load() {
 	if s.path == "" {
 		return
 	}
+
 	b, err := os.ReadFile(s.path)
 	if err != nil {
 		return // no snapshot yet, start fresh.
 	}
+
 	var snap snapshot
-	if err := json.Unmarshal(b, &snap); err != nil {
+
+	err = json.Unmarshal(b, &snap)
+	if err != nil {
 		return
 	}
+
 	if snap.Tasks != nil {
 		s.Tasks = snap.Tasks
 	}
+
 	if snap.Examples != nil {
 		s.Examples = snap.Examples
 	}
+
 	if snap.TrainingJobs != nil {
 		s.TrainingJobs = snap.TrainingJobs
 	}
+
 	if snap.Deployments != nil {
 		s.Deployments = snap.Deployments
 	}
+
 	if snap.Feedback != nil {
 		s.Feedback = snap.Feedback
 	}
+
 	if snap.Agents != nil {
 		s.Agents = snap.Agents
 	}
+
 	if snap.FineTuneRequests != nil {
 		s.FineTuneRequests = snap.FineTuneRequests
 	}
+
 	if snap.FineTuneJobs != nil {
 		s.FineTuneJobs = snap.FineTuneJobs
 	}
+
 	if snap.TrainedModels != nil {
 		s.TrainedModels = snap.TrainedModels
 	}
+
 	if snap.Datasets != nil {
 		s.Datasets = snap.Datasets
 	}
@@ -114,6 +129,7 @@ func (s *Store) persist() {
 	if s.path == "" {
 		return
 	}
+
 	snap := snapshot{
 		Tasks:            s.Tasks,
 		Examples:         s.Examples,
@@ -126,14 +142,20 @@ func (s *Store) persist() {
 		TrainedModels:    s.TrainedModels,
 		Datasets:         s.Datasets,
 	}
+
 	b, err := json.MarshalIndent(snap, "", "  ")
 	if err != nil {
 		return
 	}
+
 	_ = os.MkdirAll(filepath.Dir(s.path), 0o755)
+
 	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+
+	err = os.WriteFile(tmp, b, 0o644)
+	if err != nil {
 		return
 	}
+
 	_ = os.Rename(tmp, s.path)
 }

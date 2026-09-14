@@ -30,24 +30,30 @@ func NewFeedbackUsecase(tasks domain.TaskRepository,
 // SubmitMisprediction records a production error for the continuous
 // improvement loop described in the product spec.
 func (u *FeedbackUsecase) SubmitMisprediction(taskID, input, actual, expected string) (*domain.Misprediction, error) {
-	if _, err := u.tasks.Get(taskID); err != nil {
+	_, err := u.tasks.Get(taskID)
+	if err != nil {
 		return nil, err
 	}
+
 	input, actual, expected = strings.TrimSpace(input), strings.TrimSpace(actual), strings.TrimSpace(expected)
 	if input == "" || expected == "" {
 		return nil, domain.ErrInvalidInput
 	}
+
 	m := &domain.Misprediction{
 		ID:             u.idGen.NewID("fb"),
 		TaskID:         taskID,
 		Input:          input,
 		ActualOutput:   actual,
 		ExpectedOutput: expected,
-		CreatedAt:      time.Now().UTC(),
+		CreatedAt:      time.Now().UTC(), Resolved: false,
 	}
-	if err := u.feedback.Add(m); err != nil {
+
+	err = u.feedback.Add(m)
+	if err != nil {
 		return nil, err
 	}
+
 	return m, nil
 }
 
@@ -63,12 +69,18 @@ func (u *FeedbackUsecase) FoldIntoDataset(taskID string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+
 	if len(unresolved) == 0 {
 		return 0, nil
 	}
+
 	now := time.Now().UTC()
-	var batch []*domain.Example
-	var ids []string
+
+	var (
+		batch []*domain.Example
+		ids   []string
+	)
+
 	for _, m := range unresolved {
 		batch = append(batch, &domain.Example{
 			ID:        u.idGen.NewID("ex"),
@@ -76,15 +88,20 @@ func (u *FeedbackUsecase) FoldIntoDataset(taskID string) (int, error) {
 			Input:     m.Input,
 			Output:    m.ExpectedOutput,
 			Source:    domain.SourceFeedback,
-			CreatedAt: now,
+			CreatedAt: now, Flagged: false, FlagNote: "", Duplicate: false,
 		})
 		ids = append(ids, m.ID)
 	}
-	if err := u.examples.AddBatch(batch); err != nil {
+
+	err = u.examples.AddBatch(batch)
+	if err != nil {
 		return 0, err
 	}
-	if err := u.feedback.MarkResolved(ids); err != nil {
+
+	err = u.feedback.MarkResolved(ids)
+	if err != nil {
 		return 0, err
 	}
+
 	return len(batch), nil
 }

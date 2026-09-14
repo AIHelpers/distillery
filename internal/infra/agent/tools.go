@@ -44,7 +44,8 @@ func (t *DatasetValidatorTool) Execute(_ context.Context, input domain.ToolInput
 		"issues":      []string{},
 		"datasetID":   datasetID,
 	}
-	return domain.ToolOutput{Result: result}, nil
+
+	return domain.ToolOutput{Result: result, Error: ""}, nil
 }
 
 // ModelSelectorTool picks a base model.
@@ -78,7 +79,8 @@ func (t *ModelSelectorTool) Execute(_ context.Context, _ domain.ToolInput) (doma
 		"modelID":   "gpt2-medium",
 		"reasoning": "Selected based on task type and resource constraints",
 	}
-	return domain.ToolOutput{Result: result}, nil
+
+	return domain.ToolOutput{Result: result, Error: ""}, nil
 }
 
 // TrainingControllerTool starts fine-tuning jobs.
@@ -116,14 +118,17 @@ func (t *TrainingControllerTool) InputSchema() map[string]interface{} {
 // Execute starts a training job (simulated).
 func (t *TrainingControllerTool) Execute(_ context.Context, input domain.ToolInput) (domain.ToolOutput, error) {
 	baseModel, _ := input.Params["baseModel"].(string)
+
 	datasetID, _ := input.Params["datasetID"].(string)
 	if baseModel == "" || datasetID == "" {
-		return domain.ToolOutput{Error: "missing baseModel or datasetID"}, nil
+		return domain.ToolOutput{Error: "missing baseModel or datasetID", Result: nil}, nil
 	}
+
 	result := map[string]interface{}{
 		"taskID":  "job_sim_1",
 		"status":  "started",
 		"message": "Training job initiated (simulated)",
 	}
-	return domain.ToolOutput{Result: result}, nil
+
+	return domain.ToolOutput{Result: result, Error: ""}, nil
 }

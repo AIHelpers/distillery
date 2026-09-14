@@ -18,5 +18,6 @@ func NewRandomIDGenerator() *RandomIDGenerator { return &RandomIDGenerator{} }
 func (g *RandomIDGenerator) NewID(prefix string) string {
 	b := make([]byte, 6)
 	_, _ = rand.Read(b)
+
 	return fmt.Sprintf("%s_%s", prefix, hex.EncodeToString(b))
 }

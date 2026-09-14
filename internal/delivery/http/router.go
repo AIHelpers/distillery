@@ -114,41 +114,10 @@ func NewRouter(h Handlers, webFS fs.FS) http.Handler {
 	}
 
 	// --- Fine-tuning / Coding AI Agent ---.
-	if h.FineTune != nil {
-		mux.HandleFunc("POST /api/v1/fine-tuning/datasets", h.FineTune.RegisterDataset)
-		mux.HandleFunc("GET /api/v1/fine-tuning/datasets/{datasetID}/analyse", func(w http.ResponseWriter, r *http.Request) {
-			h.FineTune.AnalyseDataset(w, r, r.PathValue("datasetID"))
-		})
-		mux.HandleFunc("POST /api/v1/fine-tuning/hyperparameters", h.FineTune.RecommendHyperparams)
-		mux.HandleFunc("POST /api/v1/fine-tuning/requests", h.FineTune.CreateRequest)
-		mux.HandleFunc("GET /api/v1/fine-tuning/requests", h.FineTune.ListRequests)
-		mux.HandleFunc("POST /api/v1/fine-tuning/requests/{requestID}/start", func(w http.ResponseWriter, r *http.Request) {
-			h.FineTune.StartTraining(w, r, r.PathValue("requestID"))
-		})
-		mux.HandleFunc("GET /api/v1/fine-tuning/jobs", h.FineTune.ListJobs)
-		mux.HandleFunc("GET /api/v1/fine-tuning/jobs/{jobID}", func(w http.ResponseWriter, r *http.Request) {
-			h.FineTune.JobStatus(w, r, r.PathValue("jobID"))
-		})
-		mux.HandleFunc("GET /api/v1/fine-tuning/jobs/{jobID}/monitor", func(w http.ResponseWriter, r *http.Request) {
-			h.FineTune.JobMonitor(w, r, r.PathValue("jobID"))
-		})
-		mux.HandleFunc("GET /api/v1/fine-tuning/jobs/{jobID}/insights", func(w http.ResponseWriter, r *http.Request) {
-			h.FineTune.JobInsights(w, r, r.PathValue("jobID"))
-		})
-		mux.HandleFunc("GET /api/v1/fine-tuning/jobs/{jobID}/quality", func(w http.ResponseWriter, r *http.Request) {
-			h.FineTune.JobQuality(w, r, r.PathValue("jobID"))
-		})
-		mux.HandleFunc("GET /api/v1/fine-tuning/models", h.FineTune.ListModels)
-		mux.HandleFunc("GET /api/v1/fine-tuning/models/{modelID}", func(w http.ResponseWriter, r *http.Request) {
-			h.FineTune.GetModel(w, r, r.PathValue("modelID"))
-		})
-		mux.HandleFunc("POST /api/v1/fine-tuning/models/{modelID}/export", func(w http.ResponseWriter, r *http.Request) {
-			h.FineTune.ExportModel(w, r, r.PathValue("modelID"))
-		})
-	}
+	registerFineTuneRoutes(mux, h.FineTune)
 
 	// --- Health check (useful for container orchestrators) ---.
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
@@ -158,9 +127,47 @@ func NewRouter(h Handlers, webFS fs.FS) http.Handler {
 	return withLogging(mux)
 }
 
+func registerFineTuneRoutes(mux *http.ServeMux, h *FineTuneHandler) {
+	if h == nil {
+		return
+	}
+
+	mux.HandleFunc("POST /api/v1/fine-tuning/datasets", h.RegisterDataset)
+	mux.HandleFunc("GET /api/v1/fine-tuning/datasets/{datasetID}/analyse", func(w http.ResponseWriter, r *http.Request) {
+		h.AnalyseDataset(w, r, r.PathValue("datasetID"))
+	})
+	mux.HandleFunc("POST /api/v1/fine-tuning/hyperparameters", h.RecommendHyperparams)
+	mux.HandleFunc("POST /api/v1/fine-tuning/requests", h.CreateRequest)
+	mux.HandleFunc("GET /api/v1/fine-tuning/requests", h.ListRequests)
+	mux.HandleFunc("POST /api/v1/fine-tuning/requests/{requestID}/start", func(w http.ResponseWriter, r *http.Request) {
+		h.StartTraining(w, r, r.PathValue("requestID"))
+	})
+	mux.HandleFunc("GET /api/v1/fine-tuning/jobs", h.ListJobs)
+	mux.HandleFunc("GET /api/v1/fine-tuning/jobs/{jobID}", func(w http.ResponseWriter, r *http.Request) {
+		h.JobStatus(w, r, r.PathValue("jobID"))
+	})
+	mux.HandleFunc("GET /api/v1/fine-tuning/jobs/{jobID}/monitor", func(w http.ResponseWriter, r *http.Request) {
+		h.JobMonitor(w, r, r.PathValue("jobID"))
+	})
+	mux.HandleFunc("GET /api/v1/fine-tuning/jobs/{jobID}/insights", func(w http.ResponseWriter, r *http.Request) {
+		h.JobInsights(w, r, r.PathValue("jobID"))
+	})
+	mux.HandleFunc("GET /api/v1/fine-tuning/jobs/{jobID}/quality", func(w http.ResponseWriter, r *http.Request) {
+		h.JobQuality(w, r, r.PathValue("jobID"))
+	})
+	mux.HandleFunc("GET /api/v1/fine-tuning/models", h.ListModels)
+	mux.HandleFunc("GET /api/v1/fine-tuning/models/{modelID}", func(w http.ResponseWriter, r *http.Request) {
+		h.GetModel(w, r, r.PathValue("modelID"))
+	})
+	mux.HandleFunc("POST /api/v1/fine-tuning/models/{modelID}/export", func(w http.ResponseWriter, r *http.Request) {
+		h.ExportModel(w, r, r.PathValue("modelID"))
+	})
+}
+
 func withLogging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+
 		next.ServeHTTP(w, r)
 		log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start))
 	})

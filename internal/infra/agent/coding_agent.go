@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	time "time"
 
 	"distillery/internal/domain"
 )
@@ -31,10 +32,21 @@ func NewCodingAgent(
 }
 
 // AnalyzeDataset assesses a dataset and returns AI recommendations.
-func (a *CodingAgentImpl) AnalyzeDataset(ctx context.Context, datasetID string) (domain.DatasetAnalysis, error) {
+func (a *CodingAgentImpl) AnalyzeDataset(_ context.Context, datasetID string) (domain.DatasetAnalysis, error) {
 	dataset, err := a.datasetRepo.Get(datasetID)
 	if err != nil {
-		return domain.DatasetAnalysis{}, err
+		return domain.DatasetAnalysis{
+			FileCount:          0,
+			TotalSize:          0,
+			TotalTokens:        0,
+			LanguageCoverage:   nil,
+			ComplexityRange:    [2]int{},
+			AverageComplexity:  0,
+			SyntaxValidityRate: 0,
+			Recommendations:    nil,
+			ReadyForTraining:   false,
+			QualityScore:       0,
+		}, err
 	}
 
 	analysis := domain.DatasetAnalysis{
@@ -44,7 +56,7 @@ func (a *CodingAgentImpl) AnalyzeDataset(ctx context.Context, datasetID string) 
 		SyntaxValidityRate: dataset.Quality.ValidityRate,
 		AverageComplexity:  dataset.Quality.ComplexityScore,
 		QualityScore:       dataset.Quality.OverallScore,
-		ReadyForTraining:   dataset.Quality.OverallScore > 60,
+		ReadyForTraining:   dataset.Quality.OverallScore > 60, LanguageCoverage: nil, ComplexityRange: [2]int{}, Recommendations: nil,
 	}
 
 	if dataset.Quality.OverallScore < 50 {
@@ -68,7 +80,7 @@ func (a *CodingAgentImpl) AnalyzeDataset(ctx context.Context, datasetID string) 
 
 // RecommendHyperparameters selects optimal hyperparameters based on language,
 // skill, and dataset characteristics.
-func (a *CodingAgentImpl) RecommendHyperparameters(ctx context.Context, req domain.HyperparameterRecommendationReq) (domain.TrainingParameters, error) {
+func (a *CodingAgentImpl) RecommendHyperparameters(_ context.Context, req domain.HyperparameterRecommendationReq) (domain.TrainingParameters, error) {
 	params := domain.TrainingParameters{
 		BatchSize:          8,
 		LearningRate:       2e-5,
@@ -78,7 +90,7 @@ func (a *CodingAgentImpl) RecommendHyperparameters(ctx context.Context, req doma
 		SchedulerType:      "linear",
 		OptimizerType:      "adamw",
 		GradientAccumSteps: 1,
-		WarmupSteps:        100,
+		WarmupSteps:        100, Epochs: 0, WeightDecay: 0, ContextWindow: 0,
 	}
 
 	switch req.Language {
@@ -90,10 +102,26 @@ func (a *CodingAgentImpl) RecommendHyperparameters(ctx context.Context, req doma
 		params.LearningRate = 2e-5
 		params.Epochs = 3
 		params.ContextWindow = 200
-	case domain.LangJavaScript:
+	case domain.LangJavaScript, domain.LangTypeScript:
 		params.LearningRate = 3e-5
 		params.Epochs = 3
 		params.ContextWindow = 300
+	case domain.LangJava:
+		params.LearningRate = 3e-5
+		params.Epochs = 3
+		params.ContextWindow = 256
+	case domain.LangCSharp:
+		params.LearningRate = 3e-5
+		params.Epochs = 3
+		params.ContextWindow = 256
+	case domain.LangRust:
+		params.LearningRate = 3e-5
+		params.Epochs = 3
+		params.ContextWindow = 256
+	case domain.LangCpp:
+		params.LearningRate = 3e-5
+		params.Epochs = 3
+		params.ContextWindow = 256
 	default:
 		params.LearningRate = 3e-5
 		params.Epochs = 3
@@ -123,29 +151,49 @@ func (a *CodingAgentImpl) StartTraining(ctx context.Context, req *domain.FineTun
 	}
 
 	if !analysis.ReadyForTraining {
-		return "", fmt.Errorf("dataset not ready: %v", analysis.Recommendations)
+		return "", fmt.Errorf("%w: %v", domain.ErrNotReady, analysis.Recommendations)
 	}
 
 	if req.TrainingParams.Epochs == 0 {
 		recommended, _ := a.RecommendHyperparameters(ctx, domain.HyperparameterRecommendationReq{
 			Language:    req.Language,
 			Skill:       req.Skill,
-			DatasetSize: analysis.TotalTokens,
+			DatasetSize: analysis.TotalTokens, AvailableGPU: 0,
 		})
 		req.TrainingParams = recommended
 	}
 
-	if err := a.requestRepo.Create(req); err != nil {
+	err = a.requestRepo.Create(req)
+	if err != nil {
 		return "", err
 	}
 
 	job := &domain.FineTuneJob{
-		RequestID:   req.ID,
-		Status:      domain.JobQueued,
-		TotalEpochs: req.TrainingParams.Epochs,
+		RequestID:      req.ID,
+		Status:         domain.JobQueued,
+		TotalEpochs:    req.TrainingParams.Epochs,
+		ID:             "",
+		Progress:       0,
+		CurrentEpoch:   0,
+		CurrentStep:    0,
+		TotalSteps:     0,
+		Loss:           nil,
+		ValidationLoss: nil,
+		LearningRate:   nil,
+		CustomMetrics:  nil,
+		FinalMetrics:   nil,
+		Error:          "",
+		BestCheckpoint: domain.CheckpointInfo{},
+		OutputModelID:  "",
+		ComputeCost:    0,
+		GPUHours:       0,
+		CreatedAt:      time.Time{},
+		StartedAt:      nil,
+		CompletedAt:    nil,
 	}
 
-	if err := a.jobRepo.Create(job); err != nil {
+	err = a.jobRepo.Create(job)
+	if err != nil {
 		return "", err
 	}
 
@@ -153,20 +201,21 @@ func (a *CodingAgentImpl) StartTraining(ctx context.Context, req *domain.FineTun
 }
 
 // MonitorTraining inspects loss trends and returns AI optimization guidance.
-func (a *CodingAgentImpl) MonitorTraining(ctx context.Context, jobID string) (domain.TrainingOptimization, error) {
+func (a *CodingAgentImpl) MonitorTraining(_ context.Context, jobID string) (domain.TrainingOptimization, error) {
 	job, err := a.jobRepo.Get(jobID)
 	if err != nil {
-		return domain.TrainingOptimization{}, err
+		return domain.TrainingOptimization{CurrentStep: 0, CurrentLoss: 0, LossDirection: "", Suggestion: "", Action: "", Confidence: 0}, err
 	}
 
 	optimization := domain.TrainingOptimization{
-		CurrentStep: job.CurrentStep,
+		CurrentStep: job.CurrentStep, CurrentLoss: 0, LossDirection: "", Suggestion: "", Action: "", Confidence: 0,
 	}
 
 	if len(job.Loss) == 0 {
 		optimization.Suggestion = "No loss data available yet."
 		optimization.Action = domain.ActionContinue
 		optimization.Confidence = 50
+
 		return optimization, nil
 	}
 
@@ -196,14 +245,30 @@ func (a *CodingAgentImpl) MonitorTraining(ctx context.Context, jobID string) (do
 }
 
 // ValidateTrainingQuality produces a post-training quality report.
-func (a *CodingAgentImpl) ValidateTrainingQuality(ctx context.Context, jobID string) (domain.QualityReport, error) {
+func (a *CodingAgentImpl) ValidateTrainingQuality(_ context.Context, jobID string) (domain.QualityReport, error) {
 	job, err := a.jobRepo.Get(jobID)
 	if err != nil {
-		return domain.QualityReport{}, err
+		return domain.QualityReport{
+			TrainingComplete:  false,
+			FinalLoss:         0,
+			BestMetrics:       nil,
+			CodeExecutability: 0,
+			SyntaxValidity:    0,
+			OverallQuality:    "",
+			Issues:            nil,
+			Recommendations:   nil,
+		}, err
 	}
 
 	report := domain.QualityReport{
-		TrainingComplete: job.Status == domain.JobCompleted,
+		TrainingComplete:  job.Status == domain.JobCompleted,
+		FinalLoss:         0,
+		BestMetrics:       nil,
+		CodeExecutability: 0,
+		SyntaxValidity:    0,
+		OverallQuality:    "",
+		Issues:            nil,
+		Recommendations:   nil,
 	}
 
 	if job.FinalMetrics != nil {
@@ -215,19 +280,18 @@ func (a *CodingAgentImpl) ValidateTrainingQuality(ctx context.Context, jobID str
 	if job.FinalMetrics != nil {
 		syntaxVal, hasSyntax = job.FinalMetrics[string(domain.MetricSyntaxValid)]
 	}
-	if hasSyntax {
-		report.SyntaxValidity = syntaxVal
-		switch {
-		case syntaxVal > 0.95:
-			report.OverallQuality = "excellent"
-		case syntaxVal > 0.85:
-			report.OverallQuality = "good"
-		default:
-			report.OverallQuality = "fair"
-			report.Issues = append(report.Issues, "Syntax validity below 85%")
-		}
-	} else {
+
+	report.SyntaxValidity = syntaxVal
+	switch {
+	case !hasSyntax:
 		report.OverallQuality = "good"
+	case syntaxVal > 0.95:
+		report.OverallQuality = "excellent"
+	case syntaxVal > 0.85:
+		report.OverallQuality = "good"
+	default:
+		report.OverallQuality = "fair"
+		report.Issues = append(report.Issues, "Syntax validity below 85%")
 	}
 
 	if job.FinalMetrics != nil {
@@ -246,10 +310,10 @@ func (a *CodingAgentImpl) ValidateTrainingQuality(ctx context.Context, jobID str
 }
 
 // GetInsights summarizes the agent's view of a training run.
-func (a *CodingAgentImpl) GetInsights(ctx context.Context, jobID string) (domain.AgentInsights, error) {
+func (a *CodingAgentImpl) GetInsights(_ context.Context, jobID string) (domain.AgentInsights, error) {
 	job, err := a.jobRepo.Get(jobID)
 	if err != nil {
-		return domain.AgentInsights{}, err
+		return domain.AgentInsights{Phase: "", Summary: "", Metrics: nil, Warnings: nil, NextSteps: nil, EstimatedQuality: ""}, err
 	}
 
 	insights := domain.AgentInsights{
@@ -258,7 +322,7 @@ func (a *CodingAgentImpl) GetInsights(ctx context.Context, jobID string) (domain
 			"current_epoch": job.CurrentEpoch,
 			"total_epochs":  job.TotalEpochs,
 			"current_step":  job.CurrentStep,
-		},
+		}, Phase: "", Summary: "", Warnings: nil, NextSteps: nil, EstimatedQuality: "",
 	}
 
 	switch job.Status {
@@ -267,6 +331,7 @@ func (a *CodingAgentImpl) GetInsights(ctx context.Context, jobID string) (domain
 		if job.FinalMetrics != nil {
 			loss = job.FinalMetrics[string(domain.MetricLoss)]
 		}
+
 		insights.Phase = "completion"
 		insights.Summary = fmt.Sprintf("Training completed. Final loss: %.4f", loss)
 		insights.EstimatedQuality = "ready"

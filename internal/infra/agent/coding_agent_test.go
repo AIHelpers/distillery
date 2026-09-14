@@ -2,7 +2,9 @@ package agent_test
 
 import (
 	"context"
+	"errors"
 	"testing"
+	time "time"
 
 	"distillery/internal/domain"
 	infraagent "distillery/internal/infra/agent"
@@ -35,12 +37,14 @@ func sampleAnalysisDataset() *domain.DatasetInfo {
 		Quality: domain.DatasetQuality{
 			OverallScore:    85.0,
 			ValidityRate:    0.95,
-			ComplexityScore: 5.5,
-		},
+			ComplexityScore: 5.5, Issues: nil,
+		}, TotalLines: 0, SampleCount: 0, Owner: "", CreatedAt: time.Time{},
 	}
 }
 
 func TestCodingAgent_AnalyzeDataset_ReadyForTraining(t *testing.T) {
+	t.Parallel()
+
 	reqs, jobs, dsRepo, models := newCodingAgentTestRepos()
 	agent := newTestCodingAgent(reqs, jobs, dsRepo, models)
 	_ = dsRepo.Create(sampleAnalysisDataset())
@@ -49,21 +53,27 @@ func TestCodingAgent_AnalyzeDataset_ReadyForTraining(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
 	if !analysis.ReadyForTraining {
 		t.Error("expected ready for training")
 	}
+
 	if analysis.FileCount != 1000 {
 		t.Errorf("expected file count 1000, got %d", analysis.FileCount)
 	}
+
 	if analysis.QualityScore != 85.0 {
 		t.Errorf("expected quality score 85.0, got %f", analysis.QualityScore)
 	}
+
 	if analysis.SyntaxValidityRate != 0.95 {
 		t.Errorf("expected validity 0.95, got %f", analysis.SyntaxValidityRate)
 	}
 }
 
 func TestCodingAgent_AnalyzeDataset_LowQuality(t *testing.T) {
+	t.Parallel()
+
 	reqs, jobs, dsRepo, models := newCodingAgentTestRepos()
 	agent := newTestCodingAgent(reqs, jobs, dsRepo, models)
 	ds := sampleAnalysisDataset()
@@ -74,15 +84,19 @@ func TestCodingAgent_AnalyzeDataset_LowQuality(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
 	if analysis.ReadyForTraining {
 		t.Error("expected not ready for training")
 	}
+
 	if len(analysis.Recommendations) == 0 {
 		t.Error("expected recommendations for low quality")
 	}
 }
 
 func TestCodingAgent_AnalyzeDataset_SmallDataset(t *testing.T) {
+	t.Parallel()
+
 	reqs, jobs, dsRepo, models := newCodingAgentTestRepos()
 	agent := newTestCodingAgent(reqs, jobs, dsRepo, models)
 	ds := sampleAnalysisDataset()
@@ -93,18 +107,23 @@ func TestCodingAgent_AnalyzeDataset_SmallDataset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
 	foundSmallRecommendation := false
+
 	for _, rec := range analysis.Recommendations {
-		if len(rec) > 0 && rec[0] == 'D' { // "Dataset is small..."
+		if rec != "" && rec[0] == 'D' { // "Dataset is small...".
 			foundSmallRecommendation = true
 		}
 	}
+
 	if !foundSmallRecommendation {
 		t.Error("expected recommendation about small dataset")
 	}
 }
 
 func TestCodingAgent_AnalyzeDataset_LowValidity(t *testing.T) {
+	t.Parallel()
+
 	reqs, jobs, dsRepo, models := newCodingAgentTestRepos()
 	agent := newTestCodingAgent(reqs, jobs, dsRepo, models)
 	ds := sampleAnalysisDataset()
@@ -115,28 +134,35 @@ func TestCodingAgent_AnalyzeDataset_LowValidity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
 	foundValidityRecommendation := false
+
 	for _, rec := range analysis.Recommendations {
-		if len(rec) > 0 && rec[0] == 'C' { // "Code validity rate..."
+		if rec != "" && rec[0] == 'C' { // "Code validity rate...".
 			foundValidityRecommendation = true
 		}
 	}
+
 	if !foundValidityRecommendation {
 		t.Error("expected recommendation about low validity")
 	}
 }
 
 func TestCodingAgent_AnalyzeDataset_NotFound(t *testing.T) {
+	t.Parallel()
+
 	reqs, jobs, dsRepo, models := newCodingAgentTestRepos()
 	agent := newTestCodingAgent(reqs, jobs, dsRepo, models)
 
 	_, err := agent.AnalyzeDataset(context.Background(), "missing")
-	if err != domain.ErrNotFound {
+	if !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
 }
 
 func TestCodingAgent_RecommendHyperparameters_Python(t *testing.T) {
+	t.Parallel()
+
 	agent := newTestCodingAgent(nil, nil, nil, nil)
 
 	params, err := agent.RecommendHyperparameters(context.Background(), domain.HyperparameterRecommendationReq{
@@ -148,18 +174,23 @@ func TestCodingAgent_RecommendHyperparameters_Python(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
 	if params.LearningRate != 5e-5 {
 		t.Errorf("expected learning rate 5e-5, got %f", params.LearningRate)
 	}
+
 	if params.ContextWindow != 256 {
 		t.Errorf("expected context window 256, got %d", params.ContextWindow)
 	}
+
 	if !params.PreserveSyntax {
 		t.Error("expected preserve syntax")
 	}
 }
 
 func TestCodingAgent_RecommendHyperparameters_Go(t *testing.T) {
+	t.Parallel()
+
 	agent := newTestCodingAgent(nil, nil, nil, nil)
 
 	params, err := agent.RecommendHyperparameters(context.Background(), domain.HyperparameterRecommendationReq{
@@ -171,15 +202,19 @@ func TestCodingAgent_RecommendHyperparameters_Go(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
 	if params.LearningRate != 2e-5 {
 		t.Errorf("expected learning rate 2e-5, got %f", params.LearningRate)
 	}
+
 	if params.ContextWindow != 200 {
 		t.Errorf("expected context window 200, got %d", params.ContextWindow)
 	}
 }
 
 func TestCodingAgent_RecommendHyperparameters_JavaScript(t *testing.T) {
+	t.Parallel()
+
 	agent := newTestCodingAgent(nil, nil, nil, nil)
 
 	params, err := agent.RecommendHyperparameters(context.Background(), domain.HyperparameterRecommendationReq{
@@ -191,12 +226,15 @@ func TestCodingAgent_RecommendHyperparameters_JavaScript(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
 	if params.ContextWindow != 300 {
 		t.Errorf("expected context window 300, got %d", params.ContextWindow)
 	}
 }
 
 func TestCodingAgent_RecommendHyperparameters_SmallDataset(t *testing.T) {
+	t.Parallel()
+
 	agent := newTestCodingAgent(nil, nil, nil, nil)
 
 	params, err := agent.RecommendHyperparameters(context.Background(), domain.HyperparameterRecommendationReq{
@@ -208,12 +246,15 @@ func TestCodingAgent_RecommendHyperparameters_SmallDataset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
 	if params.Epochs != 5 {
 		t.Errorf("expected 5 epochs for small dataset, got %d", params.Epochs)
 	}
 }
 
 func TestCodingAgent_RecommendHyperparameters_LargeDataset(t *testing.T) {
+	t.Parallel()
+
 	agent := newTestCodingAgent(nil, nil, nil, nil)
 
 	params, err := agent.RecommendHyperparameters(context.Background(), domain.HyperparameterRecommendationReq{
@@ -225,15 +266,19 @@ func TestCodingAgent_RecommendHyperparameters_LargeDataset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
 	if params.Epochs != 2 {
 		t.Errorf("expected 2 epochs for large dataset, got %d", params.Epochs)
 	}
+
 	if params.BatchSize != 16 {
 		t.Errorf("expected batch size 16 for large dataset, got %d", params.BatchSize)
 	}
 }
 
 func TestCodingAgent_RecommendHyperparameters_MultiGPU(t *testing.T) {
+	t.Parallel()
+
 	agent := newTestCodingAgent(nil, nil, nil, nil)
 
 	params, err := agent.RecommendHyperparameters(context.Background(), domain.HyperparameterRecommendationReq{
@@ -245,12 +290,15 @@ func TestCodingAgent_RecommendHyperparameters_MultiGPU(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
 	if params.GradientAccumSteps != 2 {
 		t.Errorf("expected 2 grad accum steps for multi-GPU, got %d", params.GradientAccumSteps)
 	}
 }
 
 func TestCodingAgent_StartTraining_Valid(t *testing.T) {
+	t.Parallel()
+
 	reqs, jobs, dsRepo, models := newCodingAgentTestRepos()
 	agent := newTestCodingAgent(reqs, jobs, dsRepo, models)
 	_ = dsRepo.Create(sampleAnalysisDataset())
@@ -264,29 +312,36 @@ func TestCodingAgent_StartTraining_Valid(t *testing.T) {
 		DatasetID: "ds_1",
 		Owner:     "user_1",
 		TrainingParams: domain.TrainingParameters{
-			Epochs: 3,
-		},
+			Epochs: 3, BatchSize: 0, LearningRate: 0, WarmupSteps: 0, MaxSequenceLength: 0, GradientAccumSteps: 0, WeightDecay: 0, SchedulerType: "", OptimizerType: "", PreserveSyntax: false, ContextWindow: 0, BalancedSampling: false,
+		}, Description: "", ValidationParams: domain.ValidationParameters{}, Status: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{},
 	}
+
 	jobID, err := agent.StartTraining(context.Background(), req)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
 	if jobID != "" {
 		t.Errorf("agent returns empty job ID (usecase generates it), got %q", jobID)
 	}
+
 	list, _ := jobs.List()
 	if len(list) != 1 {
 		t.Errorf("expected 1 job created, got %d", len(list))
 	}
+
 	if list[0].RequestID != "ft_1" {
 		t.Errorf("expected request ID 'ft_1', got %q", list[0].RequestID)
 	}
+
 	if list[0].Status != domain.JobQueued {
 		t.Errorf("expected status %q, got %q", domain.JobQueued, list[0].Status)
 	}
 }
 
 func TestCodingAgent_StartTraining_EmptyEpochs(t *testing.T) {
+	t.Parallel()
+
 	reqs, jobs, dsRepo, models := newCodingAgentTestRepos()
 	agent := newTestCodingAgent(reqs, jobs, dsRepo, models)
 	_ = dsRepo.Create(sampleAnalysisDataset())
@@ -298,21 +353,26 @@ func TestCodingAgent_StartTraining_EmptyEpochs(t *testing.T) {
 		Skill:     domain.SkillCodeCompletion,
 		BaseModel: "gpt2-large",
 		DatasetID: "ds_1",
-		Owner:     "user_1",
+		Owner:     "user_1", Description: "", TrainingParams: domain.TrainingParameters{Epochs: 0, BatchSize: 0, LearningRate: 0, WarmupSteps: 0, MaxSequenceLength: 0, GradientAccumSteps: 0, WeightDecay: 0, SchedulerType: "", OptimizerType: "", PreserveSyntax: false, ContextWindow: 0, BalancedSampling: false}, ValidationParams: domain.ValidationParameters{}, Status: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{},
 	}
+
 	jobID, err := agent.StartTraining(context.Background(), req)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
 	if jobID != "" {
 		t.Errorf("agent returns empty job ID (usecase generates it), got %q", jobID)
 	}
+
 	if req.TrainingParams.Epochs == 0 {
 		t.Error("expected recommended epochs to be set")
 	}
 }
 
 func TestCodingAgent_StartTraining_NotReady(t *testing.T) {
+	t.Parallel()
+
 	reqs, jobs, dsRepo, models := newCodingAgentTestRepos()
 	agent := newTestCodingAgent(reqs, jobs, dsRepo, models)
 	ds := sampleAnalysisDataset()
@@ -324,8 +384,9 @@ func TestCodingAgent_StartTraining_NotReady(t *testing.T) {
 		Name:      "Test",
 		Language:  domain.LangPython,
 		DatasetID: "ds_1",
-		Owner:     "user_1",
+		Owner:     "user_1", Description: "", Skill: "", BaseModel: "", TrainingParams: domain.TrainingParameters{Epochs: 0, BatchSize: 0, LearningRate: 0, WarmupSteps: 0, MaxSequenceLength: 0, GradientAccumSteps: 0, WeightDecay: 0, SchedulerType: "", OptimizerType: "", PreserveSyntax: false, ContextWindow: 0, BalancedSampling: false}, ValidationParams: domain.ValidationParameters{}, Status: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{},
 	}
+
 	_, err := agent.StartTraining(context.Background(), req)
 	if err == nil {
 		t.Fatal("expected error for not-ready dataset")
@@ -333,6 +394,8 @@ func TestCodingAgent_StartTraining_NotReady(t *testing.T) {
 }
 
 func TestCodingAgent_StartTraining_DatasetNotFound(t *testing.T) {
+	t.Parallel()
+
 	reqs, jobs, dsRepo, models := newCodingAgentTestRepos()
 	agent := newTestCodingAgent(reqs, jobs, dsRepo, models)
 
@@ -341,89 +404,98 @@ func TestCodingAgent_StartTraining_DatasetNotFound(t *testing.T) {
 		Name:      "Test",
 		Language:  domain.LangPython,
 		DatasetID: "missing",
-		Owner:     "user_1",
+		Owner:     "user_1", Description: "", Skill: "", BaseModel: "", TrainingParams: domain.TrainingParameters{Epochs: 0, BatchSize: 0, LearningRate: 0, WarmupSteps: 0, MaxSequenceLength: 0, GradientAccumSteps: 0, WeightDecay: 0, SchedulerType: "", OptimizerType: "", PreserveSyntax: false, ContextWindow: 0, BalancedSampling: false}, ValidationParams: domain.ValidationParameters{}, Status: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{},
 	}
+
 	_, err := agent.StartTraining(context.Background(), req)
-	if err != domain.ErrNotFound {
+	if !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
 }
 
 func TestCodingAgent_MonitorTraining_NoLossData(t *testing.T) {
+	t.Parallel()
+
 	reqs, jobs, dsRepo, models := newCodingAgentTestRepos()
 	agent := newTestCodingAgent(reqs, jobs, dsRepo, models)
-	job := &domain.FineTuneJob{ID: "ftj_1", RequestID: "ft_1", Status: domain.JobRunning}
+	job := &domain.FineTuneJob{ID: "ftj_1", RequestID: "ft_1", Status: domain.JobRunning, Progress: 0, CurrentEpoch: 0, TotalEpochs: 0, CurrentStep: 0, TotalSteps: 0, Loss: nil, ValidationLoss: nil, LearningRate: nil, CustomMetrics: nil, FinalMetrics: nil, Error: "", BestCheckpoint: domain.CheckpointInfo{}, OutputModelID: "", ComputeCost: 0, GPUHours: 0, CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil}
 	_ = jobs.Create(job)
 
 	opt, err := agent.MonitorTraining(context.Background(), "ftj_1")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
 	if opt.Action != domain.ActionContinue {
 		t.Errorf("expected action %q, got %q", domain.ActionContinue, opt.Action)
 	}
+
 	if opt.Suggestion == "" {
 		t.Error("expected suggestion")
 	}
 }
 
-func TestCodingAgent_MonitorTraining_LossDecreasing(t *testing.T) {
-	reqs, jobs, dsRepo, models := newCodingAgentTestRepos()
-	agent := newTestCodingAgent(reqs, jobs, dsRepo, models)
-	job := &domain.FineTuneJob{ID: "ftj_1", RequestID: "ft_1", Status: domain.JobRunning, CurrentStep: 100}
-	var loss []domain.MetricPoint
-	for i := 0; i < 6; i++ {
-		loss = append(loss, domain.MetricPoint{Step: i, Value: 3.0 - float64(i)*0.1})
-	}
-	job.Loss = loss
-	_ = jobs.Create(job)
+func TestCodingAgent_MonitorTraining_LossTrend(t *testing.T) {
+	t.Parallel()
 
-	opt, err := agent.MonitorTraining(context.Background(), "ftj_1")
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
+	tests := []struct {
+		name     string
+		initial  float64
+		step     float64
+		expected string
+		action   domain.OptimizationAction
+	}{
+		{name: "decreasing", initial: 3.0, step: -0.1, expected: "decreasing", action: domain.ActionContinue},
+		{name: "increasing", initial: 1.0, step: 0.1, expected: "increasing", action: domain.ActionReduceLR},
 	}
-	if opt.LossDirection != "decreasing" {
-		t.Errorf("expected loss direction 'decreasing', got %q", opt.LossDirection)
-	}
-	if opt.Action != domain.ActionContinue {
-		t.Errorf("expected action %q, got %q", domain.ActionContinue, opt.Action)
-	}
-}
 
-func TestCodingAgent_MonitorTraining_LossIncreasing(t *testing.T) {
-	reqs, jobs, dsRepo, models := newCodingAgentTestRepos()
-	agent := newTestCodingAgent(reqs, jobs, dsRepo, models)
-	job := &domain.FineTuneJob{ID: "ftj_1", RequestID: "ft_1", Status: domain.JobRunning}
-	var loss []domain.MetricPoint
-	for i := 0; i < 6; i++ {
-		loss = append(loss, domain.MetricPoint{Step: i, Value: 1.0 + float64(i)*0.1})
-	}
-	job.Loss = loss
-	_ = jobs.Create(job)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	opt, err := agent.MonitorTraining(context.Background(), "ftj_1")
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if opt.LossDirection != "increasing" {
-		t.Errorf("expected loss direction 'increasing', got %q", opt.LossDirection)
-	}
-	if opt.Action != domain.ActionReduceLR {
-		t.Errorf("expected action %q, got %q", domain.ActionReduceLR, opt.Action)
+			reqs, jobs, dsRepo, models := newCodingAgentTestRepos()
+			agent := newTestCodingAgent(reqs, jobs, dsRepo, models)
+			job := &domain.FineTuneJob{ID: "ftj_1", RequestID: "ft_1", Status: domain.JobRunning, CurrentStep: 100, Progress: 0, CurrentEpoch: 0, TotalEpochs: 0, TotalSteps: 0, Loss: nil, ValidationLoss: nil, LearningRate: nil, CustomMetrics: nil, FinalMetrics: nil, Error: "", BestCheckpoint: domain.CheckpointInfo{}, OutputModelID: "", ComputeCost: 0, GPUHours: 0, CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil}
+
+			loss := make([]domain.MetricPoint, 0, 6)
+			for i := range 6 {
+				loss = append(loss, domain.MetricPoint{Step: i, Value: tt.initial + float64(i)*tt.step, Epoch: 0, Timestamp: time.Time{}})
+			}
+
+			job.Loss = loss
+			_ = jobs.Create(job)
+
+			opt, err := agent.MonitorTraining(context.Background(), "ftj_1")
+			if err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+
+			if opt.LossDirection != tt.expected {
+				t.Errorf("expected loss direction %q, got %q", tt.expected, opt.LossDirection)
+			}
+
+			if opt.Action != tt.action {
+				t.Errorf("expected action %q, got %q", tt.action, opt.Action)
+			}
+		})
 	}
 }
 
 func TestCodingAgent_MonitorTraining_NotFound(t *testing.T) {
+	t.Parallel()
+
 	reqs, jobs, dsRepo, models := newCodingAgentTestRepos()
 	agent := newTestCodingAgent(reqs, jobs, dsRepo, models)
 
 	_, err := agent.MonitorTraining(context.Background(), "missing")
-	if err != domain.ErrNotFound {
+	if !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
 }
 
 func TestCodingAgent_ValidateTrainingQuality_Completed(t *testing.T) {
+	t.Parallel()
+
 	reqs, jobs, dsRepo, models := newCodingAgentTestRepos()
 	agent := newTestCodingAgent(reqs, jobs, dsRepo, models)
 	job := &domain.FineTuneJob{
@@ -434,7 +506,7 @@ func TestCodingAgent_ValidateTrainingQuality_Completed(t *testing.T) {
 			string(domain.MetricLoss):              1.2,
 			string(domain.MetricSyntaxValid):       0.97,
 			string(domain.MetricCodeExecutability): 0.95,
-		},
+		}, Progress: 0, CurrentEpoch: 0, TotalEpochs: 0, CurrentStep: 0, TotalSteps: 0, Loss: nil, ValidationLoss: nil, LearningRate: nil, CustomMetrics: nil, Error: "", BestCheckpoint: domain.CheckpointInfo{}, OutputModelID: "", ComputeCost: 0, GPUHours: 0, CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil,
 	}
 	_ = jobs.Create(job)
 
@@ -442,21 +514,27 @@ func TestCodingAgent_ValidateTrainingQuality_Completed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
 	if !report.TrainingComplete {
 		t.Error("expected training complete")
 	}
+
 	if report.FinalLoss != 1.2 {
 		t.Errorf("expected final loss 1.2, got %f", report.FinalLoss)
 	}
+
 	if report.OverallQuality != "excellent" {
 		t.Errorf("expected quality 'excellent', got %q", report.OverallQuality)
 	}
+
 	if report.SyntaxValidity != 0.97 {
 		t.Errorf("expected syntax validity 0.97, got %f", report.SyntaxValidity)
 	}
 }
 
 func TestCodingAgent_ValidateTrainingQuality_Fair(t *testing.T) {
+	t.Parallel()
+
 	reqs, jobs, dsRepo, models := newCodingAgentTestRepos()
 	agent := newTestCodingAgent(reqs, jobs, dsRepo, models)
 	job := &domain.FineTuneJob{
@@ -466,7 +544,7 @@ func TestCodingAgent_ValidateTrainingQuality_Fair(t *testing.T) {
 		FinalMetrics: map[string]float64{
 			string(domain.MetricLoss):        2.5,
 			string(domain.MetricSyntaxValid): 0.8,
-		},
+		}, Progress: 0, CurrentEpoch: 0, TotalEpochs: 0, CurrentStep: 0, TotalSteps: 0, Loss: nil, ValidationLoss: nil, LearningRate: nil, CustomMetrics: nil, Error: "", BestCheckpoint: domain.CheckpointInfo{}, OutputModelID: "", ComputeCost: 0, GPUHours: 0, CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil,
 	}
 	_ = jobs.Create(job)
 
@@ -474,37 +552,45 @@ func TestCodingAgent_ValidateTrainingQuality_Fair(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
 	if report.OverallQuality != "fair" {
 		t.Errorf("expected quality 'fair', got %q", report.OverallQuality)
 	}
 }
 
 func TestCodingAgent_ValidateTrainingQuality_NoMetrics(t *testing.T) {
+	t.Parallel()
+
 	reqs, jobs, dsRepo, models := newCodingAgentTestRepos()
 	agent := newTestCodingAgent(reqs, jobs, dsRepo, models)
-	job := &domain.FineTuneJob{ID: "ftj_1", RequestID: "ft_1", Status: domain.JobCompleted}
+	job := &domain.FineTuneJob{ID: "ftj_1", RequestID: "ft_1", Status: domain.JobCompleted, Progress: 0, CurrentEpoch: 0, TotalEpochs: 0, CurrentStep: 0, TotalSteps: 0, Loss: nil, ValidationLoss: nil, LearningRate: nil, CustomMetrics: nil, FinalMetrics: nil, Error: "", BestCheckpoint: domain.CheckpointInfo{}, OutputModelID: "", ComputeCost: 0, GPUHours: 0, CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil}
 	_ = jobs.Create(job)
 
 	report, err := agent.ValidateTrainingQuality(context.Background(), "ftj_1")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
 	if report.OverallQuality != "good" {
 		t.Errorf("expected quality 'good', got %q", report.OverallQuality)
 	}
 }
 
 func TestCodingAgent_ValidateTrainingQuality_NotFound(t *testing.T) {
+	t.Parallel()
+
 	reqs, jobs, dsRepo, models := newCodingAgentTestRepos()
 	agent := newTestCodingAgent(reqs, jobs, dsRepo, models)
 
 	_, err := agent.ValidateTrainingQuality(context.Background(), "missing")
-	if err != domain.ErrNotFound {
+	if !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
 }
 
 func TestCodingAgent_GetInsights_Completed(t *testing.T) {
+	t.Parallel()
+
 	reqs, jobs, dsRepo, models := newCodingAgentTestRepos()
 	agent := newTestCodingAgent(reqs, jobs, dsRepo, models)
 	job := &domain.FineTuneJob{
@@ -514,7 +600,7 @@ func TestCodingAgent_GetInsights_Completed(t *testing.T) {
 		Progress:     100,
 		CurrentEpoch: 3,
 		TotalEpochs:  3,
-		FinalMetrics: map[string]float64{string(domain.MetricLoss): 1.1},
+		FinalMetrics: map[string]float64{string(domain.MetricLoss): 1.1}, CurrentStep: 0, TotalSteps: 0, Loss: nil, ValidationLoss: nil, LearningRate: nil, CustomMetrics: nil, Error: "", BestCheckpoint: domain.CheckpointInfo{}, OutputModelID: "", ComputeCost: 0, GPUHours: 0, CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil,
 	}
 	_ = jobs.Create(job)
 
@@ -522,18 +608,23 @@ func TestCodingAgent_GetInsights_Completed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
 	if insights.Phase != "completion" {
 		t.Errorf("expected phase 'completion', got %q", insights.Phase)
 	}
+
 	if insights.EstimatedQuality != "ready" {
 		t.Errorf("expected quality 'ready', got %q", insights.EstimatedQuality)
 	}
+
 	if len(insights.NextSteps) != 3 {
 		t.Errorf("expected 3 next steps, got %d", len(insights.NextSteps))
 	}
 }
 
 func TestCodingAgent_GetInsights_Running(t *testing.T) {
+	t.Parallel()
+
 	reqs, jobs, dsRepo, models := newCodingAgentTestRepos()
 	agent := newTestCodingAgent(reqs, jobs, dsRepo, models)
 	job := &domain.FineTuneJob{
@@ -542,7 +633,7 @@ func TestCodingAgent_GetInsights_Running(t *testing.T) {
 		Status:       domain.JobRunning,
 		CurrentEpoch: 1,
 		TotalEpochs:  3,
-		CurrentStep:  500,
+		CurrentStep:  500, Progress: 0, TotalSteps: 0, Loss: nil, ValidationLoss: nil, LearningRate: nil, CustomMetrics: nil, FinalMetrics: nil, Error: "", BestCheckpoint: domain.CheckpointInfo{}, OutputModelID: "", ComputeCost: 0, GPUHours: 0, CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil,
 	}
 	_ = jobs.Create(job)
 
@@ -550,22 +641,26 @@ func TestCodingAgent_GetInsights_Running(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
 	if insights.Phase != "training" {
 		t.Errorf("expected phase 'training', got %q", insights.Phase)
 	}
+
 	if insights.EstimatedQuality != "progressing" {
 		t.Errorf("expected quality 'progressing', got %q", insights.EstimatedQuality)
 	}
 }
 
 func TestCodingAgent_GetInsights_Failed(t *testing.T) {
+	t.Parallel()
+
 	reqs, jobs, dsRepo, models := newCodingAgentTestRepos()
 	agent := newTestCodingAgent(reqs, jobs, dsRepo, models)
 	job := &domain.FineTuneJob{
 		ID:        "ftj_1",
 		RequestID: "ft_1",
 		Status:    domain.JobFailed,
-		Error:     "OOM",
+		Error:     "OOM", Progress: 0, CurrentEpoch: 0, TotalEpochs: 0, CurrentStep: 0, TotalSteps: 0, Loss: nil, ValidationLoss: nil, LearningRate: nil, CustomMetrics: nil, FinalMetrics: nil, BestCheckpoint: domain.CheckpointInfo{}, OutputModelID: "", ComputeCost: 0, GPUHours: 0, CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil,
 	}
 	_ = jobs.Create(job)
 
@@ -573,35 +668,42 @@ func TestCodingAgent_GetInsights_Failed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
 	if insights.Phase != "completion" {
 		t.Errorf("expected phase 'completion', got %q", insights.Phase)
 	}
+
 	if insights.EstimatedQuality != "failed" {
 		t.Errorf("expected quality 'failed', got %q", insights.EstimatedQuality)
 	}
 }
 
 func TestCodingAgent_GetInsights_Unknown(t *testing.T) {
+	t.Parallel()
+
 	reqs, jobs, dsRepo, models := newCodingAgentTestRepos()
 	agent := newTestCodingAgent(reqs, jobs, dsRepo, models)
-	job := &domain.FineTuneJob{ID: "ftj_1", RequestID: "ft_1", Status: domain.JobStatus("weird")}
+	job := &domain.FineTuneJob{ID: "ftj_1", RequestID: "ft_1", Status: domain.JobStatus("weird"), Progress: 0, CurrentEpoch: 0, TotalEpochs: 0, CurrentStep: 0, TotalSteps: 0, Loss: nil, ValidationLoss: nil, LearningRate: nil, CustomMetrics: nil, FinalMetrics: nil, Error: "", BestCheckpoint: domain.CheckpointInfo{}, OutputModelID: "", ComputeCost: 0, GPUHours: 0, CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil}
 	_ = jobs.Create(job)
 
 	insights, err := agent.GetInsights(context.Background(), "ftj_1")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
 	if insights.Phase != "unknown" {
 		t.Errorf("expected phase 'unknown', got %q", insights.Phase)
 	}
 }
 
 func TestCodingAgent_GetInsights_NotFound(t *testing.T) {
+	t.Parallel()
+
 	reqs, jobs, dsRepo, models := newCodingAgentTestRepos()
 	agent := newTestCodingAgent(reqs, jobs, dsRepo, models)
 
 	_, err := agent.GetInsights(context.Background(), "missing")
-	if err != domain.ErrNotFound {
+	if !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
 }

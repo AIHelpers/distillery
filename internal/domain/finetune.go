@@ -72,8 +72,8 @@ type TrainingParameters struct {
 	MaxSequenceLength  int     `json:"max_sequence_length"`
 	GradientAccumSteps int     `json:"gradient_accumulation_steps"`
 	WeightDecay        float64 `json:"weight_decay"`
-	SchedulerType      string  `json:"scheduler_type"` // "linear", "cosine"
-	OptimizerType      string  `json:"optimizer_type"` // "adam", "adamw"
+	SchedulerType      string  `json:"scheduler_type"` // "linear", "cosine".
+	OptimizerType      string  `json:"optimizer_type"` // "adam", "adamw".
 	PreserveSyntax     bool    `json:"preserve_syntax"`
 	ContextWindow      int     `json:"context_window"`
 	BalancedSampling   bool    `json:"balanced_sampling"`
@@ -154,7 +154,7 @@ type TrainedModel struct {
 	BaseModel       string              `json:"base_model"`
 	FineTuneJobID   string              `json:"finetune_job_id"`
 	Version         string              `json:"version"`
-	Status          string              `json:"status"` // "ready", "archived"
+	Status          string              `json:"status"` // "ready", "archived".
 	Checkpoint      string              `json:"checkpoint"`
 	HuggingFaceURL  string              `json:"huggingface_url,omitempty"`
 	Quantized       bool                `json:"quantized"`
@@ -187,7 +187,7 @@ type DatasetInfo struct {
 	TotalTokens int64               `json:"total_tokens"`
 	SampleCount int                 `json:"sample_count"`
 	Quality     DatasetQuality      `json:"quality"`
-	Status      string              `json:"status"` // "validated", "needs_review", "invalid"
+	Status      string              `json:"status"` // "validated", "needs_review", "invalid".
 	Owner       string              `json:"owner"`
 	CreatedAt   time.Time           `json:"created_at"`
 }
@@ -205,6 +205,8 @@ type FineTuneRequestRepository interface {
 }
 
 // FineTuneJobRepository persists fine-tuning jobs and their metrics.
+//
+//nolint:interfacebloat // the repository API is intentionally granular
 type FineTuneJobRepository interface {
 	Create(job *FineTuneJob) error
 	Get(id string) (*FineTuneJob, error)
@@ -278,7 +280,7 @@ const (
 type TrainingOptimization struct {
 	CurrentStep   int                `json:"current_step"`
 	CurrentLoss   float64            `json:"current_loss"`
-	LossDirection string             `json:"loss_direction"` // "decreasing", "stable", "increasing"
+	LossDirection string             `json:"loss_direction"` // "decreasing", "stable", "increasing".
 	Suggestion    string             `json:"suggestion"`
 	Action        OptimizationAction `json:"action"`
 	Confidence    float64            `json:"confidence"` // 0-100
@@ -291,14 +293,14 @@ type QualityReport struct {
 	BestMetrics       map[string]float64 `json:"best_metrics,omitempty"`
 	CodeExecutability float64            `json:"code_executability"`
 	SyntaxValidity    float64            `json:"syntax_validity"`
-	OverallQuality    string             `json:"overall_quality"` // "excellent", "good", "fair", "poor"
+	OverallQuality    string             `json:"overall_quality"` // "excellent", "good", "fair", "poor".
 	Issues            []string           `json:"issues,omitempty"`
 	Recommendations   []string           `json:"recommendations,omitempty"`
 }
 
 // AgentInsights is a summary of the AI agent's analysis of a training run.
 type AgentInsights struct {
-	Phase            string                 `json:"phase"` // "analysis", "training", "optimization", "completion"
+	Phase            string                 `json:"phase"` // "analysis", "training", "optimization", "completion".
 	Summary          string                 `json:"summary"`
 	Metrics          map[string]interface{} `json:"metrics,omitempty"`
 	Warnings         []string               `json:"warnings,omitempty"`

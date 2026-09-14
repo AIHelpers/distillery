@@ -22,7 +22,9 @@ func NewAgentMemoryStore() *AgentMemoryStore {
 func (m *AgentMemoryStore) Append(_ context.Context, msg domain.Message) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.messages = append(m.messages, msg)
+
 	return nil
 }
 
@@ -30,13 +32,17 @@ func (m *AgentMemoryStore) Append(_ context.Context, msg domain.Message) error {
 func (m *AgentMemoryStore) GetHistory(_ context.Context, limit int) ([]domain.Message, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
 	if len(m.messages) <= limit {
 		out := make([]domain.Message, len(m.messages))
 		copy(out, m.messages)
+
 		return out, nil
 	}
+
 	out := make([]domain.Message, limit)
 	copy(out, m.messages[len(m.messages)-limit:])
+
 	return out, nil
 }
 
@@ -44,6 +50,8 @@ func (m *AgentMemoryStore) GetHistory(_ context.Context, limit int) ([]domain.Me
 func (m *AgentMemoryStore) Clear(_ context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.messages = []domain.Message{}
+
 	return nil
 }

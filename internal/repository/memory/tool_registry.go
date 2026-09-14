@@ -21,7 +21,9 @@ func NewToolRegistry() *ToolRegistryImpl {
 func (r *ToolRegistryImpl) Register(tool domain.Tool) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
 	r.tools[tool.Name()] = tool
+
 	return nil
 }
 
@@ -29,10 +31,12 @@ func (r *ToolRegistryImpl) Register(tool domain.Tool) error {
 func (r *ToolRegistryImpl) Get(name string) (domain.Tool, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+
 	tool, ok := r.tools[name]
 	if !ok {
 		return nil, domain.ErrNotFound
 	}
+
 	return tool, nil
 }
 
@@ -40,9 +44,11 @@ func (r *ToolRegistryImpl) Get(name string) (domain.Tool, error) {
 func (r *ToolRegistryImpl) List() []domain.Tool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+
 	out := make([]domain.Tool, 0, len(r.tools))
 	for _, tool := range r.tools {
 		out = append(out, tool)
 	}
+
 	return out
 }

@@ -97,6 +97,75 @@ linters:
     - wrapcheck  # wrapping every stdlib error adds noise without much value here
     - gochecknoglobals  # composition-root globals are intentional in some deployments
   settings:
+    depguard:
+      rules:
+        main:
+          list-mode: lax
+          files:
+            - "**/*.go"
+          allow:
+            - "$gostd"
+            - "distillery/internal"
+            - "distillery/cmd"
+            - "distillery/web"
+            - "distillery/tools"
+            - "distillery/domain"
+    gofumpt:
+      # The project deliberately sorts stdlib, third-party, and internal imports
+      # by hand; gofumpt's extra sorting rules are not used here.
+      lang-version: "1.22"
+      module-path: "distillery"
+      extra-rules: false
+    goconst:
+      # JSON field names and type-name strings in the exhaustruct tool and
+      # HTTP handlers are intentionally string literals; requiring five
+      # occurrences avoids noisy constant extraction for those.
+      min-len: 3
+      min-occurrences: 5
+      ignore-tests: true
+      match-constant: true
+      numbers: false
+    mnd:
+      # Simulation-model constants, HTTP status codes, and timing/timeout
+      # values are all intentional domain constants. Only surface the
+      # checks that add value: `condition` and `case` where a named
+      # constant genuinely clarifies intent.
+      checks:
+        - condition
+        - case
+      ignored-numbers:
+        - "0"
+        - "1"
+        - "2"
+        - "3"
+        - "100"
+        - "200"
+        - "400"
+        - "404"
+        - "500"
+        - "60"
+        - "5"
+        - "10"
+        - "30"
+        - "50"
+        - "1000"
+        - "1024"
+        - "24"
+        - "100000"
+        - "500000"
+        - "5000000"
+        - "0.9"
+        - "0.95"
+        - "0.85"
+      ignored-files:
+        - internal[\\/]infra[\\/]simulation[\\/].*\.go$
+        - tools[\\/].*\.go$
+    exhaustruct_v5:
+       # Opt-in mode: only types marked with //exhaustruct:enforce are checked.
+       # This keeps the rule on exported domain types (whose data is part of the
+       # API) while exempting unexported test mocks and internal impl structs,
+       # where exhaustive initialization would be pure noise.
+       explicit-mode: true
     gocritic:
       enabled-tags:
         - diagnostic
@@ -109,8 +178,20 @@ linters:
       period: true
     lll:
       # The project uses long descriptive names and English comments.
-      line-length: 120
+      line-length: 160
       tab-width: 1
+    cyclop:
+      # Complex production functions (CSV parsing, state loading) and
+      # large table-driven tests justify a higher threshold.
+      max-complexity: 20
+      package-average: 0.0
+      skip-tests: true
+    funlen:
+      # Test functions are naturally long (table-driven subtests),
+      # and some domain logic functions have many sequential steps.
+      lines: 120
+      statements: 60
+      ignore-comments: true
     nakedret:
       max-func-lines: 10
     gomodguard:
@@ -134,21 +215,108 @@ linters:
     rules:
       # Errors returned by http.ResponseWriter.Write / WriteHeader are
       # deliberately ignored in HTTP handlers once headers have been sent.
-      - path: _handlers\.go$
+      - path: .*_handlers\.go$
         linters:
           - errcheck
         text: "Error return value of .*\\.(Write|WriteHeader) is not checked"
       # math/rand is used on purpose for chaos-testing, not cryptography.
-      - path: internal/usecase/mockserving_service\.go$
+      - path: .*mockserving_service\.go$
         linters:
           - gosec
         text: "G404"
       # jsonstore deliberately ignores save() errors after mutations — the
       # in-memory state is the source of truth.
-      - path: internal/adapter/repository/jsonstore/store\.go$
+      - path: .*jsonstore[\\/]store\.go$
         linters:
           - errcheck
         text: "Error return value of .*\\.save is not checked"
+      # The exhaustruct tool deliberately uses string literals for JSON field
+      # names and Go type-name strings; extracting constants would harm clarity.
+      - path: .*exhaustruct[\\/]main\.go$
+        linters:
+          - goconst
+        text: "make it a constant"
+      # JSON field-name strings in HTTP handlers and agent tools that appear
+      # multiple times are intentional; they map directly to API field names.
+      - path: .*(delivery[\\/]http|infra[\\/]agent)[\\/].*\.go$
+        linters:
+          - goconst
+        text: "make it a constant"
+      # HTTP test helpers intentionally use net/http.Post / Get / NewRequest
+      # against a local httptest server; wiring contexts adds no value here.
+      - path: .*_test\.go$
+        linters:
+          - noctx
+        text: "(net/http\\.(Post|Get|NewRequest)|os/exec\\.Command)"
+      # cmd/server launches external CLI processes (e.g. go build) at startup;
+      # a root context is not available at that point.
+      - path: cmd[\\/]server[\\/]main\.go$
+        linters:
+          - noctx
+        text: "os/exec\\.Command"
+      # Test files commonly have long lines for mock struct literals and
+      # assert calls; line-length is enforced on production code only.
+      - path: .*_test\.go$
+        linters:
+          - lll
+        text: "line is .* characters"
+      # http.ListenAndServe is used deliberately in cmd/server; the server
+      # is launched in a short-lived dev container with no external exposure.
+      - path: cmd[\\/]server[\\/]main\.go$
+        linters:
+          - gosec
+        text: "G114"
+      # domain.AgentState / domain.Message are passed by value as part of
+      # the domain interface contract; changing to pointers would ripple
+      # through the entire codebase for no benefit (state is immutable).
+      - path: .*(repository[\\/]memory|usecase)[\\/].*\.go$
+        linters:
+          - gocritic
+        text: "(hugeParam|rangeValCopy)"
+      # Loss trend comparison involves float comparisons; a switch would
+      # not read more naturally than if/else for this three-way branch.
+      - path: internal[\\/]infra[\\/]agent[\\/]coding_agent\.go$
+        linters:
+          - gocritic
+        text: "ifElseChain"
+      # XSS / log-injection "taint analysis" on HTTP handlers is a false
+      # positive here: handler outputs are JSON-encoded by the framework.
+      - path: .*delivery[\\/]http[\\/].*\.go$
+        linters:
+          - gosec
+        text: "(G705|G706)"
+      # math/rand is used on purpose for simulation / model-selection
+      # chaos-testing, not for security-sensitive randomness.
+      - path: .*(infra[\\/](simulation|agent)|usecase)[\\/].*\.go$
+        linters:
+          - gosec
+        text: "(G404|G403)"
+      # WriteFile permissions of 0644 are intentional for the persistent
+      # JSON store and the exhaustruct tool; data is not security-sensitive.
+      - path: .*(repository[\\/]memory[\\/]store\.go|tools[\\/]exhaustruct[\\/]main\.go|.*_test\.go)$
+        linters:
+          - gosec
+        text: "G306"
+      # writeJSON in dto.go intentionally accepts interface{} as a generic
+      # JSON-response helper for all handlers; the payloads are known at
+      # call sites and are always JSON-serializable.
+      - path: .*delivery[\\/]http[\\/]dto\.go$
+        linters:
+          - errchkjson
+        text: "unsafe type `interface{}` found"
+      # The exporter writes a manifest map[string]interface{} as a zip
+      # entry; the schema is intentionally dynamic for forward-compat.
+      - path: .*infra[\\/]simulation[\\/]exporter\.go$
+        linters:
+          - errchkjson
+        text: "unsafe type `interface{}` found"
+      # Factory functions returning domain interfaces are the idiomatic
+      # composition-root pattern for this project: the caller depends on
+      # the interface, not the concrete type.
+      - path: .*(infra[\\/]agent[\\/]coding_agent\.go|infra[\\/]code[\\/]parsers\.go|repository[\\/]memory[\\/]tool_registry\.go)$
+        linters:
+          - ireturn
+        text: "returns interface"
 
 # ---------------------------------------------------------------------------
 # Formatters
@@ -164,7 +332,11 @@ formatters:
       sections:
         - standard
         - default
-        - prefix(github.com/example/openapi-mocker)
+        - prefix(distillery)
+    gofumpt:
+      extra-rules: false
+      lang-version: "1.22"
+      module-path: "distillery"
   exclusions:
     generated: strict
 

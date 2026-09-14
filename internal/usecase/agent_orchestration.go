@@ -43,24 +43,42 @@ func (u *AgentOrchestrationUsecase) StartFineTuningAgent(ctx context.Context, ta
 	agentID := u.idGen.NewID("fta")
 	mem := memory.NewAgentMemoryStore()
 	agent := infraagent.NewReflectAgent(agentID, mem, u.toolRegistry, u.llmProvider, 10)
+
 	config := domain.AgentConfig{
 		Name:            fmt.Sprintf("FineTuning[%s]", taskID),
 		SystemPrompt:    sysPromptFineTune(),
 		MaxIterations:   3,
 		Timeout:         30 * time.Minute,
-		TemperatureHint: 0.3,
+		TemperatureHint: 0.3, TopPHint: 0,
 	}
-	if err := agent.Initialize(ctx, config); err != nil {
-		return domain.AgentState{}, err
+
+	err := agent.Initialize(ctx, config)
+	if err != nil {
+		return domain.AgentState{
+			ID:           "",
+			Status:       "",
+			CurrentTask:  "",
+			Progress:     0,
+			ToolCalls:    nil,
+			History:      nil,
+			Error:        "",
+			LastActivity: time.Time{},
+			Metadata:     nil,
+		}, err
 	}
+
 	u.agents.Store(agentID, agent)
+
 	goal := fmt.Sprintf("Fine-tune model %s on dataset %s for task %s.", baseModel, datasetID, taskID)
+
 	state, err := agent.Execute(ctx, goal)
 	if err != nil {
 		state.Error = err.Error()
 		state.Status = "error"
 	}
+
 	_ = u.agentRepo.SaveState(ctx, state)
+
 	return state, err
 }
 
@@ -69,6 +87,7 @@ func (u *AgentOrchestrationUsecase) GetAgentState(ctx context.Context, agentID s
 	if agent, ok := u.agents.Load(agentID); ok {
 		return agent.(domain.Agent).GetState(ctx)
 	}
+
 	return u.agentRepo.GetState(ctx, agentID)
 }
 
@@ -82,8 +101,10 @@ func (u *AgentOrchestrationUsecase) PauseAgent(ctx context.Context, agentID stri
 	if agent, ok := u.agents.Load(agentID); ok {
 		state, _ := agent.(domain.Agent).GetState(ctx)
 		state.Status = "paused"
+
 		return u.agentRepo.SaveState(ctx, state)
 	}
+
 	return domain.ErrNotFound
 }
 
@@ -92,8 +113,10 @@ func (u *AgentOrchestrationUsecase) ResumeAgent(ctx context.Context, agentID str
 	if agent, ok := u.agents.Load(agentID); ok {
 		state, _ := agent.(domain.Agent).GetState(ctx)
 		state.Status = "thinking"
+
 		return u.agentRepo.SaveState(ctx, state)
 	}
+
 	return domain.ErrNotFound
 }
 

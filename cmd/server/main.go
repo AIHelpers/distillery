@@ -62,9 +62,10 @@ func main() {
 
 	// --- Agent orchestration ---.
 	toolReg := memory.NewToolRegistry()
-	toolReg.Register(infraagent.NewDatasetValidatorTool(taskRepo))
-	toolReg.Register(infraagent.NewModelSelectorTool())
-	toolReg.Register(infraagent.NewTrainingControllerTool(taskRepo))
+	_ = toolReg.Register(infraagent.NewDatasetValidatorTool(taskRepo))
+	_ = toolReg.Register(infraagent.NewModelSelectorTool())
+	_ = toolReg.Register(infraagent.NewTrainingControllerTool(taskRepo))
+
 	llmProvider := infraagent.NewSimulatedLLMProvider()
 	agentOrchUC := usecase.NewAgentOrchestrationUsecase(agentRepo, toolReg, llmProvider, taskRepo, idGen)
 
@@ -92,7 +93,9 @@ func main() {
 	}
 
 	log.Printf("Distillery listening on %s (data: %s)", url, dataPath)
-	if err := http.ListenAndServe(addr, router); err != nil {
+
+	err := http.ListenAndServe(addr, router)
+	if err != nil {
 		log.Fatal(err)
 	}
 }
@@ -101,6 +104,7 @@ func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
+
 	return def
 }
 
@@ -114,12 +118,14 @@ func shouldOpenBrowser(mode string) bool {
 		if runtime.GOOS == "linux" && os.Getenv("DISPLAY") == "" && os.Getenv("DISTILLERY_DESKTOP") == "" {
 			return false
 		}
+
 		return true
 	}
 }
 
 func tryOpenBrowser(url string) {
 	var cmd *exec.Cmd
+
 	switch runtime.GOOS {
 	case "darwin":
 		cmd = exec.Command("open", url)
@@ -128,5 +134,6 @@ func tryOpenBrowser(url string) {
 	default:
 		cmd = exec.Command("xdg-open", url)
 	}
+
 	_ = cmd.Start()
 }

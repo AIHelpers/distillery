@@ -25,26 +25,32 @@ type startFineTuningRequest struct {
 // StartFineTuningAgent POST /api/v1/agents/fine-tuning.
 func (h *AgentHandler) StartFineTuningAgent(w http.ResponseWriter, r *http.Request) {
 	var req startFineTuningRequest
-	if err := decodeJSON(r, &req); err != nil {
+
+	err := decodeJSON(r, &req)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
+
 	state, err := h.uc.StartFineTuningAgent(r.Context(), req.TaskID, req.BaseModel, req.DatasetID)
 	if err != nil {
 		handleErr(w, err)
 		return
 	}
+
 	writeJSON(w, http.StatusAccepted, state)
 }
 
 // GetAgentState GET /api/v1/agents/{agentID}.
 func (h *AgentHandler) GetAgentState(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("agentID")
+
 	state, err := h.uc.GetAgentState(r.Context(), agentID)
 	if err != nil {
 		handleErr(w, err)
 		return
 	}
+
 	writeJSON(w, http.StatusOK, state)
 }
 
@@ -55,25 +61,32 @@ func (h *AgentHandler) ListAgentStates(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
 	writeJSON(w, http.StatusOK, states)
 }
 
 // PauseAgent POST /api/v1/agents/{agentID}/pause.
 func (h *AgentHandler) PauseAgent(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("agentID")
-	if err := h.uc.PauseAgent(r.Context(), agentID); err != nil {
+
+	err := h.uc.PauseAgent(r.Context(), agentID)
+	if err != nil {
 		handleErr(w, err)
 		return
 	}
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // ResumeAgent POST /api/v1/agents/{agentID}/resume.
 func (h *AgentHandler) ResumeAgent(w http.ResponseWriter, r *http.Request) {
 	agentID := r.PathValue("agentID")
-	if err := h.uc.ResumeAgent(r.Context(), agentID); err != nil {
+
+	err := h.uc.ResumeAgent(r.Context(), agentID)
+	if err != nil {
 		handleErr(w, err)
 		return
 	}
+
 	w.WriteHeader(http.StatusNoContent)
 }

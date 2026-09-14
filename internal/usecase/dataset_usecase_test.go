@@ -1,7 +1,9 @@
 package usecase_test
 
 import (
+	"errors"
 	"testing"
+	time "time"
 
 	"distillery/internal/domain"
 	"distillery/internal/usecase"
@@ -14,7 +16,9 @@ func newDatasetUsecase(tasks *mockTaskRepo, examples *mockExampleRepo, synthGen 
 // --- AddExamples ---.
 
 func TestDatasetUsecase_AddExamples_Valid(t *testing.T) {
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskClassification}}
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskClassification, Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	examples := &mockExampleRepo{}
 	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
 
@@ -25,32 +29,40 @@ func TestDatasetUsecase_AddExamples_Valid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
 	if stats == nil {
 		t.Fatal("expected non-nil stats")
 	}
+
 	if len(examples.addBatch) != 2 {
 		t.Errorf("expected 2 examples in batch, got %d", len(examples.addBatch))
 	}
+
 	if examples.addBatch[0].Input != "hello" {
 		t.Errorf("expected trimmed input 'hello', got %q", examples.addBatch[0].Input)
 	}
+
 	if examples.addBatch[0].Source != domain.SourceUser {
 		t.Errorf("expected SourceUser, got %v", examples.addBatch[0].Source)
 	}
 }
 
 func TestDatasetUsecase_AddExamples_TaskNotFound(t *testing.T) {
+	t.Parallel()
+
 	tasks := &mockTaskRepo{} // returns ErrNotFound.
 	uc := newDatasetUsecase(tasks, &mockExampleRepo{}, &mockSynthGen{})
 
 	_, err := uc.AddExamples("missing", []usecase.ExamplePair{{Input: "a", Output: "b"}})
-	if err != domain.ErrNotFound {
+	if !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
 }
 
 func TestDatasetUsecase_AddExamples_SkipsEmpty(t *testing.T) {
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration}}
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration, Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	uc := newDatasetUsecase(tasks, &mockExampleRepo{}, &mockSynthGen{})
 
 	_, err := uc.AddExamples("task_1", []usecase.ExamplePair{
@@ -58,18 +70,20 @@ func TestDatasetUsecase_AddExamples_SkipsEmpty(t *testing.T) {
 		{Input: "a", Output: ""},
 		{Input: "   ", Output: "   "},
 	})
-	if err != domain.ErrInvalidInput {
+	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput when all pairs empty, got %v", err)
 	}
 }
 
 func TestDatasetUsecase_AddExamples_RepoError(t *testing.T) {
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	examples := &mockExampleRepo{err: errRepoFailure}
 	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
 
 	_, err := uc.AddExamples("task_1", []usecase.ExamplePair{{Input: "a", Output: "b"}})
-	if err != errRepoFailure {
+	if !errors.Is(err, errRepoFailure) {
 		t.Errorf("expected errRepoFailure, got %v", err)
 	}
 }
@@ -77,7 +91,9 @@ func TestDatasetUsecase_AddExamples_RepoError(t *testing.T) {
 // --- GenerateSynthetic ---.
 
 func TestDatasetUsecase_GenerateSynthetic_Valid(t *testing.T) {
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	examples := &mockExampleRepo{
 		byTask: []*domain.Example{
 			{ID: "ex_1", Source: domain.SourceUser, Input: "seed", Output: "out"},
@@ -90,35 +106,42 @@ func TestDatasetUsecase_GenerateSynthetic_Valid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
 	if stats == nil {
 		t.Fatal("expected non-nil stats")
 	}
+
 	if len(examples.addBatch) != 1 {
 		t.Errorf("expected 1 synthetic example added, got %d", len(examples.addBatch))
 	}
+
 	if examples.addBatch[0].Source != domain.SourceSynthetic {
 		t.Errorf("expected SourceSynthetic, got %v", examples.addBatch[0].Source)
 	}
 }
 
 func TestDatasetUsecase_GenerateSynthetic_NoSeed(t *testing.T) {
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	examples := &mockExampleRepo{byTask: []*domain.Example{
 		{Source: domain.SourceSynthetic, Input: "a", Output: "b"},
 	}}
 	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
 
 	_, err := uc.GenerateSynthetic("task_1", 5)
-	if err != domain.ErrInvalidInput {
+	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput when no user seed, got %v", err)
 	}
 }
 
 func TestDatasetUsecase_GenerateSynthetic_TaskNotFound(t *testing.T) {
+	t.Parallel()
+
 	uc := newDatasetUsecase(&mockTaskRepo{}, &mockExampleRepo{}, &mockSynthGen{})
 
 	_, err := uc.GenerateSynthetic("missing", 5)
-	if err != domain.ErrNotFound {
+	if !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
 }
@@ -126,6 +149,8 @@ func TestDatasetUsecase_GenerateSynthetic_TaskNotFound(t *testing.T) {
 // --- ListExamples ---.
 
 func TestDatasetUsecase_ListExamples(t *testing.T) {
+	t.Parallel()
+
 	examples := &mockExampleRepo{byTask: []*domain.Example{{ID: "ex_1"}, {ID: "ex_2"}}}
 	uc := newDatasetUsecase(&mockTaskRepo{}, examples, &mockSynthGen{})
 
@@ -133,6 +158,7 @@ func TestDatasetUsecase_ListExamples(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
 	if len(list) != 2 {
 		t.Errorf("expected 2 examples, got %d", len(list))
 	}
@@ -141,10 +167,13 @@ func TestDatasetUsecase_ListExamples(t *testing.T) {
 // --- ImportCSV ---.
 
 func TestDatasetUsecase_ImportCSV_WithHeader(t *testing.T) {
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration}}
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration, Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	uc := newDatasetUsecase(tasks, &mockExampleRepo{}, &mockSynthGen{})
 
 	content := "input,output\nhello,world\nfoo,bar\n"
+
 	_, err := uc.ImportCSV("task_1", content)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -152,10 +181,13 @@ func TestDatasetUsecase_ImportCSV_WithHeader(t *testing.T) {
 }
 
 func TestDatasetUsecase_ImportCSV_NoHeader(t *testing.T) {
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration}}
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration, Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	uc := newDatasetUsecase(tasks, &mockExampleRepo{}, &mockSynthGen{})
 
 	content := "hello,world\nfoo,bar\n"
+
 	_, err := uc.ImportCSV("task_1", content)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -163,20 +195,24 @@ func TestDatasetUsecase_ImportCSV_NoHeader(t *testing.T) {
 }
 
 func TestDatasetUsecase_ImportCSV_Empty(t *testing.T) {
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	uc := newDatasetUsecase(tasks, &mockExampleRepo{}, &mockSynthGen{})
 
 	_, err := uc.ImportCSV("task_1", "")
-	if err != domain.ErrInvalidInput {
+	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput for empty CSV, got %v", err)
 	}
 }
 
 func TestDatasetUsecase_ImportCSV_TaskNotFound(t *testing.T) {
+	t.Parallel()
+
 	uc := newDatasetUsecase(&mockTaskRepo{}, &mockExampleRepo{}, &mockSynthGen{})
 
 	_, err := uc.ImportCSV("missing", "a,b")
-	if err != domain.ErrNotFound {
+	if !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
 }
@@ -184,9 +220,11 @@ func TestDatasetUsecase_ImportCSV_TaskNotFound(t *testing.T) {
 // --- UpdateExample ---.
 
 func TestDatasetUsecase_UpdateExample_Valid(t *testing.T) {
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	examples := &mockExampleRepo{
-		getExample: &domain.Example{ID: "ex_1", TaskID: "task_1", Input: "old", Output: "oldout"},
+		getExample: &domain.Example{ID: "ex_1", TaskID: "task_1", Input: "old", Output: "oldout", Source: "", Flagged: false, FlagNote: "", Duplicate: false, CreatedAt: time.Time{}},
 	}
 	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
 
@@ -194,26 +232,31 @@ func TestDatasetUsecase_UpdateExample_Valid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
 	if examples.updated.Input != "newin" {
 		t.Errorf("expected updated input 'newin', got %q", examples.updated.Input)
 	}
 }
 
 func TestDatasetUsecase_UpdateExample_EmptyInput(t *testing.T) {
+	t.Parallel()
+
 	uc := newDatasetUsecase(&mockTaskRepo{}, &mockExampleRepo{}, &mockSynthGen{})
 
 	_, err := uc.UpdateExample("task_1", "ex_1", "  ", "out")
-	if err != domain.ErrInvalidInput {
+	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput, got %v", err)
 	}
 }
 
 func TestDatasetUsecase_UpdateExample_NotFound(t *testing.T) {
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	uc := newDatasetUsecase(tasks, &mockExampleRepo{}, &mockSynthGen{})
 
 	_, err := uc.UpdateExample("task_1", "missing", "in", "out")
-	if err != domain.ErrNotFound {
+	if !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
 }
@@ -221,7 +264,9 @@ func TestDatasetUsecase_UpdateExample_NotFound(t *testing.T) {
 // --- DeleteExample ---.
 
 func TestDatasetUsecase_DeleteExample_Valid(t *testing.T) {
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	examples := &mockExampleRepo{}
 	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
 
@@ -229,6 +274,7 @@ func TestDatasetUsecase_DeleteExample_Valid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
 	if examples.deletedID != "ex_1" {
 		t.Errorf("expected deleted ID 'ex_1', got %q", examples.deletedID)
 	}
@@ -237,7 +283,9 @@ func TestDatasetUsecase_DeleteExample_Valid(t *testing.T) {
 // --- Curate ---.
 
 func TestDatasetUsecase_Curate_DeduplicatesAndFlags(t *testing.T) {
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskClassification}}
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskClassification, Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	examples := &mockExampleRepo{
 		byTask: []*domain.Example{
 			{ID: "e1", Input: "hello", Output: "world", Source: domain.SourceUser},
@@ -251,22 +299,28 @@ func TestDatasetUsecase_Curate_DeduplicatesAndFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
+
 	if stats.Total != 3 {
 		t.Errorf("expected total 3, got %d", stats.Total)
 	}
+
 	if stats.Duplicates != 1 {
 		t.Errorf("expected 1 duplicate, got %d", stats.Duplicates)
 	}
+
 	if stats.Flagged != 1 {
 		t.Errorf("expected 1 flagged, got %d", stats.Flagged)
 	}
+
 	if stats.UserProvided != 3 {
 		t.Errorf("expected 3 user-provided, got %d", stats.UserProvided)
 	}
 }
 
 func TestDatasetUsecase_Curate_NotReady_TooFew(t *testing.T) {
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration}}
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration, Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	examples := &mockExampleRepo{byTask: []*domain.Example{
 		{Input: "hello", Output: "world", Source: domain.SourceUser},
 	}}
@@ -279,7 +333,9 @@ func TestDatasetUsecase_Curate_NotReady_TooFew(t *testing.T) {
 }
 
 func TestDatasetUsecase_Curate_NotReady_SingleLabel(t *testing.T) {
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskClassification}}
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskClassification, Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	examples := &mockExampleRepo{byTask: []*domain.Example{
 		{Input: "hello1", Output: "same", Source: domain.SourceUser},
 		{Input: "hello2", Output: "same", Source: domain.SourceUser},
@@ -294,7 +350,9 @@ func TestDatasetUsecase_Curate_NotReady_SingleLabel(t *testing.T) {
 }
 
 func TestDatasetUsecase_Curate_Ready_Balanced(t *testing.T) {
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskClassification}}
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskClassification, Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	examples := &mockExampleRepo{byTask: []*domain.Example{
 		{Input: "hello1", Output: "yes", Source: domain.SourceUser},
 		{Input: "hello2", Output: "no", Source: domain.SourceUser},
@@ -309,7 +367,9 @@ func TestDatasetUsecase_Curate_Ready_Balanced(t *testing.T) {
 }
 
 func TestDatasetUsecase_Curate_IdenticalInputOutput(t *testing.T) {
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration}}
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration, Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	examples := &mockExampleRepo{byTask: []*domain.Example{
 		{ID: "e1", Input: "same", Output: "same", Source: domain.SourceUser},
 	}}
@@ -322,10 +382,12 @@ func TestDatasetUsecase_Curate_IdenticalInputOutput(t *testing.T) {
 }
 
 func TestDatasetUsecase_Curate_TaskNotFound(t *testing.T) {
+	t.Parallel()
+
 	uc := newDatasetUsecase(&mockTaskRepo{}, &mockExampleRepo{}, &mockSynthGen{})
 
 	_, err := uc.Curate("missing")
-	if err != domain.ErrNotFound {
+	if !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
 }

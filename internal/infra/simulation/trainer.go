@@ -22,7 +22,7 @@ func NewFineTuner() *FineTuner {
 }
 
 func (f *FineTuner) Start(
-	job *domain.TrainingJob,
+	_ *domain.TrainingJob,
 	examples []*domain.Example,
 	onUpdate func(progress int,
 	), onDone func(metrics *domain.TrainingMetrics, err error),
@@ -34,12 +34,14 @@ func (f *FineTuner) Start(
 		if len(examples) < 3 {
 			time.Sleep(f.TickInterval)
 			onDone(nil, errTooFewExamples)
+
 			return
 		}
 
 		steps := 20
 		for step := 1; step <= steps; step++ {
 			time.Sleep(f.TickInterval)
+
 			progress := step * 100 / steps
 			onUpdate(progress)
 		}
@@ -49,11 +51,14 @@ func (f *FineTuner) Start(
 		if datasetFactor > 500 {
 			datasetFactor = 500
 		}
+
 		baseLoss := 1.8 - (datasetFactor/500.0)*1.3
+
 		loss := baseLoss + r.Float64()*0.1
 		if loss < 0.05 {
 			loss = 0.05
 		}
+
 		acc := 0.55 + (datasetFactor/500.0)*0.4 + r.Float64()*0.05
 		if acc > 0.99 {
 			acc = 0.99
@@ -73,8 +78,8 @@ func round2(v float64) float64 {
 	return float64(int(v*100)) / 100
 }
 
-var errTooFewExamples = &fineTuneErr{"need at least 3 usable examples to train"}
+var errTooFewExamples = &fineTuneError{"need at least 3 usable examples to train"}
 
-type fineTuneErr struct{ msg string }
+type fineTuneError struct{ msg string }
 
-func (e *fineTuneErr) Error() string { return e.msg }
+func (e *fineTuneError) Error() string { return e.msg }

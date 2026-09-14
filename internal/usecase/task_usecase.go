@@ -22,12 +22,15 @@ func (u *TaskUsecase) CreateTask(name, description string, taskType domain.TaskT
 	if name == "" {
 		return nil, domain.ErrInvalidInput
 	}
+
 	switch taskType {
 	case domain.TaskClassification, domain.TaskExtraction, domain.TaskGeneration:
 	default:
 		return nil, domain.ErrInvalidInput
 	}
+
 	now := time.Now().UTC()
+
 	t := &domain.Task{
 		ID:          u.idGen.NewID("task"),
 		Name:        name,
@@ -36,9 +39,12 @@ func (u *TaskUsecase) CreateTask(name, description string, taskType domain.TaskT
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
-	if err := u.tasks.Create(t); err != nil {
+
+	err := u.tasks.Create(t)
+	if err != nil {
 		return nil, err
 	}
+
 	return t, nil
 }
 

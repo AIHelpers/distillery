@@ -23,16 +23,19 @@ func (s *SimulatedLLMProvider) GenerateResponse(
 	_ domain.AgentConfig,
 ) (domain.Message, error) {
 	s.callCount++
+
 	var selected []domain.ToolCall
+
 	if len(messages) > 0 && len(tools) > 0 && s.callCount <= len(tools)+1 {
 		tool := tools[(s.callCount-1)%len(tools)]
 		selected = append(selected, domain.ToolCall{
 			ID:       fmt.Sprintf("call_%d", rand.Intn(100000)),
 			ToolName: tool.Name(),
 			Input:    map[string]interface{}{"datasetID": "default", "baseModel": "gpt2", "taskType": "classification"},
-			Status:   "pending",
+			Status:   "pending", Output: domain.ToolOutput{Result: nil, Error: ""}, Error: "",
 		})
 	}
+
 	return domain.Message{
 		Role:      "assistant",
 		Content:   fmt.Sprintf("Iteration %d: executing next tool", s.callCount),
@@ -50,9 +53,11 @@ func (s *SimulatedLLMProvider) StreamResponse(
 	callback func(chunk string) error,
 ) error {
 	for _, chunk := range []string{"Thinking", " about ", "the ", "task", "..."} {
-		if err := callback(chunk); err != nil {
+		err := callback(chunk)
+		if err != nil {
 			return err
 		}
 	}
+
 	return nil
 }

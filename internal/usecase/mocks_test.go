@@ -26,7 +26,9 @@ func (m *mockTaskRepo) Create(t *domain.Task) error {
 	if m.err != nil {
 		return m.err
 	}
+
 	m.task = t
+
 	return nil
 }
 
@@ -35,9 +37,11 @@ func (m *mockTaskRepo) Get(id string) (*domain.Task, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
+
 	if m.task != nil {
 		return m.task, nil
 	}
+
 	return nil, domain.ErrNotFound
 }
 
@@ -45,9 +49,11 @@ func (m *mockTaskRepo) List() ([]*domain.Task, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
+
 	if m.list != nil {
 		return m.list, nil
 	}
+
 	return []*domain.Task{}, nil
 }
 
@@ -56,6 +62,7 @@ func (m *mockTaskRepo) Update(t *domain.Task) error {
 	if m.err != nil {
 		return m.err
 	}
+
 	return nil
 }
 
@@ -64,6 +71,7 @@ func (m *mockTaskRepo) Delete(id string) error {
 	if m.err != nil {
 		return m.err
 	}
+
 	return nil
 }
 
@@ -84,7 +92,9 @@ func (m *mockExampleRepo) Add(e *domain.Example) error {
 	if m.err != nil {
 		return m.err
 	}
+
 	m.added = append(m.added, e)
+
 	return nil
 }
 
@@ -92,32 +102,39 @@ func (m *mockExampleRepo) AddBatch(es []*domain.Example) error {
 	if m.err != nil {
 		return m.err
 	}
+
 	m.addBatch = append(m.addBatch, es...)
+
 	return nil
 }
 
-func (m *mockExampleRepo) ListByTask(taskID string) ([]*domain.Example, error) {
+func (m *mockExampleRepo) ListByTask(_ string) ([]*domain.Example, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
+
 	if m.byTask != nil {
 		return m.byTask, nil
 	}
+
 	return m.examples, nil
 }
 
-func (m *mockExampleRepo) Get(taskID, id string) (*domain.Example, error) {
+func (m *mockExampleRepo) Get(_, id string) (*domain.Example, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
+
 	if m.getExample != nil {
 		return m.getExample, nil
 	}
+
 	for _, e := range m.examples {
 		if e.ID == id {
 			return e, nil
 		}
 	}
+
 	return nil, domain.ErrNotFound
 }
 
@@ -126,21 +143,24 @@ func (m *mockExampleRepo) Update(e *domain.Example) error {
 	if m.err != nil {
 		return m.err
 	}
+
 	return nil
 }
 
-func (m *mockExampleRepo) Delete(taskID, id string) error {
+func (m *mockExampleRepo) Delete(_, id string) error {
 	m.deletedID = id
 	if m.err != nil {
 		return m.err
 	}
+
 	return nil
 }
 
-func (m *mockExampleRepo) DeleteByTask(taskID string) error {
+func (m *mockExampleRepo) DeleteByTask(_ string) error {
 	if m.err != nil {
 		return m.err
 	}
+
 	return nil
 }
 
@@ -159,8 +179,10 @@ func (m *mockTrainingRepo) Create(j *domain.TrainingJob) error {
 	if m.err != nil {
 		return m.err
 	}
+
 	m.createdJob = j
 	m.jobs = append(m.jobs, j)
+
 	return nil
 }
 
@@ -168,21 +190,25 @@ func (m *mockTrainingRepo) Get(id string) (*domain.TrainingJob, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
+
 	if m.job != nil {
 		return m.job, nil
 	}
+
 	for _, j := range m.jobs {
 		if j.ID == id {
 			return j, nil
 		}
 	}
+
 	return nil, domain.ErrNotFound
 }
 
-func (m *mockTrainingRepo) ListByTask(taskID string) ([]*domain.TrainingJob, error) {
+func (m *mockTrainingRepo) ListByTask(_ string) ([]*domain.TrainingJob, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
+
 	return m.jobs, nil
 }
 
@@ -191,16 +217,19 @@ func (m *mockTrainingRepo) Update(j *domain.TrainingJob) error {
 	if m.err != nil {
 		return m.err
 	}
+
 	return nil
 }
 
-func (m *mockTrainingRepo) LatestCompleted(taskID string) (*domain.TrainingJob, error) {
+func (m *mockTrainingRepo) LatestCompleted(_ string) (*domain.TrainingJob, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
+
 	if m.latestCompleted != nil {
 		return m.latestCompleted, nil
 	}
+
 	return nil, domain.ErrNoModel
 }
 
@@ -219,8 +248,10 @@ func (m *mockDeploymentRepo) Create(d *domain.Deployment) error {
 	if m.err != nil {
 		return m.err
 	}
+
 	m.created = d
 	m.deployments = append(m.deployments, d)
+
 	return nil
 }
 
@@ -228,31 +259,37 @@ func (m *mockDeploymentRepo) Get(id string) (*domain.Deployment, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
+
 	if m.getDeployment != nil {
 		return m.getDeployment, nil
 	}
+
 	for _, d := range m.deployments {
 		if d.ID == id {
 			return d, nil
 		}
 	}
+
 	return nil, domain.ErrNotFound
 }
 
-func (m *mockDeploymentRepo) GetActiveForTask(taskID string) (*domain.Deployment, error) {
+func (m *mockDeploymentRepo) GetActiveForTask(_ string) (*domain.Deployment, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
+
 	if m.active != nil {
 		return m.active, nil
 	}
+
 	return nil, domain.ErrNotFound
 }
 
-func (m *mockDeploymentRepo) ListByTask(taskID string) ([]*domain.Deployment, error) {
+func (m *mockDeploymentRepo) ListByTask(_ string) ([]*domain.Deployment, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
+
 	return m.deployments, nil
 }
 
@@ -261,6 +298,7 @@ func (m *mockDeploymentRepo) Update(d *domain.Deployment) error {
 	if m.err != nil {
 		return m.err
 	}
+
 	return nil
 }
 
@@ -278,21 +316,25 @@ func (m *mockFeedbackRepo) Add(f *domain.Misprediction) error {
 	if m.err != nil {
 		return m.err
 	}
+
 	m.added = f
+
 	return nil
 }
 
-func (m *mockFeedbackRepo) ListByTask(taskID string) ([]*domain.Misprediction, error) {
+func (m *mockFeedbackRepo) ListByTask(_ string) ([]*domain.Misprediction, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
+
 	return m.list, nil
 }
 
-func (m *mockFeedbackRepo) ListUnresolved(taskID string) ([]*domain.Misprediction, error) {
+func (m *mockFeedbackRepo) ListUnresolved(_ string) ([]*domain.Misprediction, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
+
 	return m.unresolved, nil
 }
 
@@ -300,7 +342,9 @@ func (m *mockFeedbackRepo) MarkResolved(ids []string) error {
 	if m.err != nil {
 		return m.err
 	}
+
 	m.resolvedIDs = ids
+
 	return nil
 }
 
@@ -314,12 +358,13 @@ type mockInferenceEngine struct {
 }
 
 func (m *mockInferenceEngine) Predict(
-	job *domain.TrainingJob,
-	examples []*domain.Example,
+	_ *domain.TrainingJob,
+	_ []*domain.Example,
 	input string,
 ) (output string, confidence float64) {
 	m.predInput = input
 	m.predCount++
+
 	return m.output, m.confidence
 }
 
@@ -333,13 +378,14 @@ type mockExporter struct {
 }
 
 func (m *mockExporter) BuildExport(
-	task *domain.Task,
-	job *domain.TrainingJob,
+	_ *domain.Task,
+	_ *domain.TrainingJob,
 ) (data []byte, filename string, err error) {
 	m.called = true
 	if m.err != nil {
 		return nil, "", m.err
 	}
+
 	return m.bytes, m.filename, nil
 }
 
@@ -350,10 +396,10 @@ type mockModelSelector struct {
 }
 
 func (m *mockModelSelector) SelectBaseModel(
-	task *domain.Task,
-	exampleCount,
-	avgInputLen,
-	avgOutputLen int,
+	_ *domain.Task,
+	_,
+	_,
+	_ int,
 ) domain.BaseModel {
 	return m.model
 }
@@ -387,6 +433,6 @@ type mockSynthGen struct {
 	generated []*domain.Example
 }
 
-func (m *mockSynthGen) Generate(task *domain.Task, seed []*domain.Example, count int) []*domain.Example {
+func (m *mockSynthGen) Generate(_ *domain.Task, _ []*domain.Example, _ int) []*domain.Example {
 	return m.generated
 }

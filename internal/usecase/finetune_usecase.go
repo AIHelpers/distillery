@@ -43,29 +43,39 @@ func (u *FineTuneUsecase) CreateRequest(req *domain.FineTuneRequest) (string, er
 	if req.Name == "" {
 		return "", domain.ErrInvalidInput
 	}
+
 	if req.Language == "" {
 		return "", domain.ErrInvalidInput
 	}
+
 	if req.DatasetID == "" {
 		return "", domain.ErrInvalidInput
 	}
+
 	if req.Owner == "" {
 		return "", domain.ErrInvalidInput
 	}
+
 	if req.BaseModel == "" {
 		req.BaseModel = "gpt2-large"
 	}
+
 	if req.Skill == "" {
 		req.Skill = domain.SkillCodeCompletion
 	}
+
 	now := time.Now().UTC()
 	req.ID = u.idGen.NewID("ft")
 	req.Status = domain.RequestDraft
 	req.CreatedAt = now
+
 	req.UpdatedAt = now
-	if err := u.reqRepo.Create(req); err != nil {
+
+	err := u.reqRepo.Create(req)
+	if err != nil {
 		return "", err
 	}
+
 	return req.ID, nil
 }
 
@@ -75,15 +85,19 @@ func (u *FineTuneUsecase) StartTraining(ctx context.Context, requestID string) (
 	if err != nil {
 		return "", err
 	}
+
 	if req.Status == domain.RequestTraining {
 		return "", domain.ErrAlreadyRunning
 	}
+
 	req.Status = domain.RequestQueued
 	req.UpdatedAt = time.Now().UTC()
+
 	jobID, err := u.agent.StartTraining(ctx, req)
 	if err != nil {
 		return "", err
 	}
+
 	return jobID, nil
 }
 
@@ -118,13 +132,15 @@ func (u *FineTuneUsecase) ListJobs() ([]*domain.FineTuneJob, error) {
 }
 
 // ListModels lists all trained models, optionally filtered.
-func (u *FineTuneUsecase) ListModels(language string, skill string) ([]*domain.TrainedModel, error) {
+func (u *FineTuneUsecase) ListModels(language, skill string) ([]*domain.TrainedModel, error) {
 	if language != "" {
 		return u.modelRepo.ListByLanguage(domain.ProgrammingLanguage(language))
 	}
+
 	if skill != "" {
 		return u.modelRepo.ListBySkill(domain.SkillCategory(skill))
 	}
+
 	return u.modelRepo.List()
 }
 
@@ -133,6 +149,7 @@ func (u *FineTuneUsecase) RegisterDataset(d *domain.DatasetInfo) (string, error)
 	if d.Name == "" || d.Language == "" || d.Owner == "" {
 		return "", domain.ErrInvalidInput
 	}
+
 	now := time.Now().UTC()
 	d.ID = u.idGen.NewID("ds")
 	d.CreatedAt = now
@@ -141,28 +158,33 @@ func (u *FineTuneUsecase) RegisterDataset(d *domain.DatasetInfo) (string, error)
 	parser := codeanalysis.NewParser(d.Language)
 	if parser == nil {
 		d.Status = "invalid"
-		d.Quality = domain.DatasetQuality{OverallScore: 0, Issues: []string{"unsupported language"}}
+		d.Quality = domain.DatasetQuality{OverallScore: 0, Issues: []string{"unsupported language"}, ValidityRate: 0, ComplexityScore: 0}
 	} else {
 		// Sample-based validation: assume representative samples validate.
 		sample := "def foo():\n    return 1\nfunc bar() int { return 1 }\nfunction baz() { return 1; }"
 		valid := parser.IsValid(sample)
 		complexity := parser.GetComplexity(sample)
+
 		validRate := 0.9
 		if !valid {
 			validRate = 0.4
 		}
+
 		d.Quality = domain.DatasetQuality{
 			ValidityRate:    validRate,
 			ComplexityScore: float64(complexity),
-			OverallScore:    validRate * 100,
+			OverallScore:    validRate * 100, Issues: nil,
 		}
 		if d.Quality.OverallScore >= 60 {
 			d.Status = "validated"
 		}
 	}
-	if err := u.datasetRepo.Create(d); err != nil {
+
+	err := u.datasetRepo.Create(d)
+	if err != nil {
 		return "", err
 	}
+
 	return d.ID, nil
 }
 
@@ -197,10 +219,15 @@ func (u *FineTuneUsecase) ExportModel(modelID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+
 	m.HuggingFaceURL = fmt.Sprintf("https://huggingface.co/%s/%s", m.Owner, m.Name)
+
 	m.Status = "ready"
-	if err := u.modelRepo.Update(m); err != nil {
+
+	err = u.modelRepo.Update(m)
+	if err != nil {
 		return "", err
 	}
+
 	return m.HuggingFaceURL, nil
 }

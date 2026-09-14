@@ -34,7 +34,7 @@ func (s *ModelSelector) SelectBaseModel(
 	case domain.TaskClassification:
 		score += 0
 	case domain.TaskExtraction:
-		score += 1
+		score++
 	case domain.TaskGeneration:
 		score += 2
 	}
@@ -42,24 +42,26 @@ func (s *ModelSelector) SelectBaseModel(
 	if avgOutputLen > 200 {
 		score += 2
 	} else if avgOutputLen > 60 {
-		score += 1
+		score++
 	}
 
 	if avgInputLen > 800 {
-		score += 1
+		score++
 	}
 
 	if exampleCount < 50 {
 		// Small dataset: prefer a smaller model to avoid overfitting risk
 		// and keep training cost down.
-		score -= 1
+		score--
 	}
 
 	if score < 0 {
 		score = 0
 	}
+
 	if score >= len(s.Catalog) {
 		score = len(s.Catalog) - 1
 	}
+
 	return s.Catalog[score]
 }

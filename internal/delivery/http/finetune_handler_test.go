@@ -16,6 +16,7 @@ import (
 
 func newFinetuneTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
+
 	store := memory.NewStore("")
 	reqRepo := memory.NewFineTuneRequestRepo(store)
 	jobRepo := memory.NewFineTuneJobRepo(store)
@@ -57,47 +58,13 @@ func newFinetuneTestServer(t *testing.T) *httptest.Server {
 	mux.HandleFunc("POST /api/v1/fine-tuning/models/{modelID}/export", func(w http.ResponseWriter, r *http.Request) {
 		h.ExportModel(w, r, r.PathValue("modelID"))
 	})
+
 	return httptest.NewServer(mux)
 }
 
-func withUser(r *http.Request) *http.Request {
-	r.Header.Set("X-User-ID", "user_1")
-	return r
-}
-
-func doRequest(t *testing.T, method, url, body string) *http.Response {
-	t.Helper()
-	var reader *strings.Reader
-	if body == "" {
-		reader = strings.NewReader("")
-	} else {
-		reader = strings.NewReader(body)
-	}
-	req, err := http.NewRequest(method, url, reader)
-	if err != nil {
-		t.Fatalf("failed to create request: %v", err)
-	}
-	if body != "" {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	return resp
-}
-
-func decodeBody[T any](t *testing.T, resp *http.Response) T {
-	t.Helper()
-	defer resp.Body.Close()
-	var v T
-	if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-	return v
-}
-
 func TestFineTuneHandler_CreateRequest_Valid(t *testing.T) {
+	t.Parallel()
+
 	srv := newFinetuneTestServer(t)
 	defer srv.Close()
 
@@ -122,22 +89,30 @@ func TestFineTuneHandler_CreateRequest_Valid(t *testing.T) {
 		t.Fatalf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusCreated {
 		t.Errorf("expected status 201, got %d", resp.StatusCode)
 	}
+
 	var data map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+
+	err = json.NewDecoder(resp.Body).Decode(&data)
+	if err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
+
 	if data["request_id"] == "" {
 		t.Error("expected non-empty request_id")
 	}
+
 	if data["status"] != "draft" {
 		t.Errorf("expected status 'draft', got %v", data["status"])
 	}
 }
 
 func TestFineTuneHandler_CreateRequest_InvalidJSON(t *testing.T) {
+	t.Parallel()
+
 	srv := newFinetuneTestServer(t)
 	defer srv.Close()
 
@@ -150,12 +125,15 @@ func TestFineTuneHandler_CreateRequest_InvalidJSON(t *testing.T) {
 		t.Fatalf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("expected status 400, got %d", resp.StatusCode)
 	}
 }
 
 func TestFineTuneHandler_CreateRequest_NoUserHeader(t *testing.T) {
+	t.Parallel()
+
 	srv := newFinetuneTestServer(t)
 	defer srv.Close()
 
@@ -173,12 +151,15 @@ func TestFineTuneHandler_CreateRequest_NoUserHeader(t *testing.T) {
 		t.Fatalf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusCreated {
 		t.Errorf("expected status 201, got %d", resp.StatusCode)
 	}
 }
 
 func TestFineTuneHandler_RegisterDataset_Valid(t *testing.T) {
+	t.Parallel()
+
 	srv := newFinetuneTestServer(t)
 	defer srv.Close()
 
@@ -204,19 +185,26 @@ func TestFineTuneHandler_RegisterDataset_Valid(t *testing.T) {
 		t.Fatalf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusCreated {
 		t.Errorf("expected status 201, got %d", resp.StatusCode)
 	}
+
 	var data map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+
+	err = json.NewDecoder(resp.Body).Decode(&data)
+	if err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
+
 	if data["dataset_id"] == "" {
 		t.Error("expected non-empty dataset_id")
 	}
 }
 
 func TestFineTuneHandler_AnalyseDataset_Existing(t *testing.T) {
+	t.Parallel()
+
 	srv := newFinetuneTestServer(t)
 	defer srv.Close()
 
@@ -237,20 +225,27 @@ func TestFineTuneHandler_AnalyseDataset_Existing(t *testing.T) {
 	req, _ := http.NewRequest("POST", srv.URL+"/api/v1/fine-tuning/datasets", strings.NewReader(regBody))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-User-ID", "user_1")
+
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("register failed: %v", err)
 	}
+
 	if resp.StatusCode != http.StatusCreated {
 		resp.Body.Close()
 		t.Fatalf("expected 201 for register, got %d", resp.StatusCode)
 	}
+
 	var regData map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&regData); err != nil {
+
+	err = json.NewDecoder(resp.Body).Decode(&regData)
+	if err != nil {
 		resp.Body.Close()
 		t.Fatalf("failed to decode register response: %v", err)
 	}
+
 	resp.Body.Close()
+
 	datasetID, _ := regData["dataset_id"].(string)
 	if datasetID == "" {
 		t.Fatal("expected non-empty dataset_id from register")
@@ -262,19 +257,26 @@ func TestFineTuneHandler_AnalyseDataset_Existing(t *testing.T) {
 		t.Fatalf("analyse failed: %v", err)
 	}
 	defer resp2.Body.Close()
+
 	if resp2.StatusCode != http.StatusOK {
 		t.Errorf("expected status 200, got %d", resp2.StatusCode)
 	}
+
 	var analysis domain.DatasetAnalysis
-	if err := json.NewDecoder(resp2.Body).Decode(&analysis); err != nil {
+
+	err = json.NewDecoder(resp2.Body).Decode(&analysis)
+	if err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
+
 	if !analysis.ReadyForTraining {
 		t.Error("expected ready for training")
 	}
 }
 
 func TestFineTuneHandler_AnalyseDataset_NotFound(t *testing.T) {
+	t.Parallel()
+
 	srv := newFinetuneTestServer(t)
 	defer srv.Close()
 
@@ -283,12 +285,15 @@ func TestFineTuneHandler_AnalyseDataset_NotFound(t *testing.T) {
 		t.Fatalf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", resp.StatusCode)
 	}
 }
 
 func TestFineTuneHandler_RecommendHyperparams_Valid(t *testing.T) {
+	t.Parallel()
+
 	srv := newFinetuneTestServer(t)
 	defer srv.Close()
 
@@ -306,26 +311,34 @@ func TestFineTuneHandler_RecommendHyperparams_Valid(t *testing.T) {
 		t.Fatalf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected status 200, got %d", resp.StatusCode)
 	}
+
 	var params domain.TrainingParameters
-	if err := json.NewDecoder(resp.Body).Decode(&params); err != nil {
+
+	err = json.NewDecoder(resp.Body).Decode(&params)
+	if err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
+
 	if params.LearningRate == 0 {
 		t.Error("expected non-zero learning rate")
 	}
+
 	if params.BatchSize == 0 {
 		t.Error("expected non-zero batch size")
 	}
 }
 
 func TestFineTuneHandler_ListRequests_Empty(t *testing.T) {
+	t.Parallel()
+
 	srv := newFinetuneTestServer(t)
 	defer srv.Close()
 
-	req, _ := http.NewRequest("GET", srv.URL+"/api/v1/fine-tuning/requests", nil)
+	req, _ := http.NewRequest("GET", srv.URL+"/api/v1/fine-tuning/requests", http.NoBody)
 	req.Header.Set("X-User-ID", "user_1")
 
 	resp, err := http.DefaultClient.Do(req)
@@ -333,19 +346,26 @@ func TestFineTuneHandler_ListRequests_Empty(t *testing.T) {
 		t.Fatalf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected status 200, got %d", resp.StatusCode)
 	}
+
 	var list []*domain.FineTuneRequest
-	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+
+	err = json.NewDecoder(resp.Body).Decode(&list)
+	if err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
+
 	if len(list) != 0 {
 		t.Errorf("expected empty list, got %d items", len(list))
 	}
 }
 
 func TestFineTuneHandler_ListJobs_Empty(t *testing.T) {
+	t.Parallel()
+
 	srv := newFinetuneTestServer(t)
 	defer srv.Close()
 
@@ -354,19 +374,26 @@ func TestFineTuneHandler_ListJobs_Empty(t *testing.T) {
 		t.Fatalf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected status 200, got %d", resp.StatusCode)
 	}
+
 	var list []*domain.FineTuneJob
-	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+
+	err = json.NewDecoder(resp.Body).Decode(&list)
+	if err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
+
 	if len(list) != 0 {
 		t.Errorf("expected empty list, got %d items", len(list))
 	}
 }
 
 func TestFineTuneHandler_JobStatus_NotFound(t *testing.T) {
+	t.Parallel()
+
 	srv := newFinetuneTestServer(t)
 	defer srv.Close()
 
@@ -375,12 +402,15 @@ func TestFineTuneHandler_JobStatus_NotFound(t *testing.T) {
 		t.Fatalf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", resp.StatusCode)
 	}
 }
 
 func TestFineTuneHandler_JobMonitor_NotFound(t *testing.T) {
+	t.Parallel()
+
 	srv := newFinetuneTestServer(t)
 	defer srv.Close()
 
@@ -389,12 +419,15 @@ func TestFineTuneHandler_JobMonitor_NotFound(t *testing.T) {
 		t.Fatalf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", resp.StatusCode)
 	}
 }
 
 func TestFineTuneHandler_JobInsights_NotFound(t *testing.T) {
+	t.Parallel()
+
 	srv := newFinetuneTestServer(t)
 	defer srv.Close()
 
@@ -403,12 +436,15 @@ func TestFineTuneHandler_JobInsights_NotFound(t *testing.T) {
 		t.Fatalf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", resp.StatusCode)
 	}
 }
 
 func TestFineTuneHandler_JobQuality_NotFound(t *testing.T) {
+	t.Parallel()
+
 	srv := newFinetuneTestServer(t)
 	defer srv.Close()
 
@@ -417,27 +453,34 @@ func TestFineTuneHandler_JobQuality_NotFound(t *testing.T) {
 		t.Fatalf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", resp.StatusCode)
 	}
 }
 
 func TestFineTuneHandler_StartTraining_NotFound(t *testing.T) {
+	t.Parallel()
+
 	srv := newFinetuneTestServer(t)
 	defer srv.Close()
 
-	req, _ := http.NewRequest("POST", srv.URL+"/api/v1/fine-tuning/requests/missing/start", nil)
+	req, _ := http.NewRequest("POST", srv.URL+"/api/v1/fine-tuning/requests/missing/start", http.NoBody)
+
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", resp.StatusCode)
 	}
 }
 
 func TestFineTuneHandler_ListModels_Empty(t *testing.T) {
+	t.Parallel()
+
 	srv := newFinetuneTestServer(t)
 	defer srv.Close()
 
@@ -446,19 +489,26 @@ func TestFineTuneHandler_ListModels_Empty(t *testing.T) {
 		t.Fatalf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected status 200, got %d", resp.StatusCode)
 	}
+
 	var list []*domain.TrainedModel
-	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+
+	err = json.NewDecoder(resp.Body).Decode(&list)
+	if err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
+
 	if len(list) != 0 {
 		t.Errorf("expected empty list, got %d items", len(list))
 	}
 }
 
 func TestFineTuneHandler_GetModel_NotFound(t *testing.T) {
+	t.Parallel()
+
 	srv := newFinetuneTestServer(t)
 	defer srv.Close()
 
@@ -467,21 +517,26 @@ func TestFineTuneHandler_GetModel_NotFound(t *testing.T) {
 		t.Fatalf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", resp.StatusCode)
 	}
 }
 
 func TestFineTuneHandler_ExportModel_NotFound(t *testing.T) {
+	t.Parallel()
+
 	srv := newFinetuneTestServer(t)
 	defer srv.Close()
 
-	req, _ := http.NewRequest("POST", srv.URL+"/api/v1/fine-tuning/models/missing/export", nil)
+	req, _ := http.NewRequest("POST", srv.URL+"/api/v1/fine-tuning/models/missing/export", http.NoBody)
+
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", resp.StatusCode)
 	}

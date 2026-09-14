@@ -38,8 +38,11 @@ func (e *Exporter) BuildExport(task *domain.Task, job *domain.TrainingJob) (data
 		"note": "Demo export from a no-code fine-tuning MVP. " +
 			"Replace adapter/weights.safetensors with real trained LoRA weights before serving.",
 	}
+
 	manifestBytes, _ := json.MarshalIndent(manifest, "", "  ")
-	if err := writeZipFile(zw, "manifest.json", manifestBytes); err != nil {
+
+	err = writeZipFile(zw, "manifest.json", manifestBytes)
+	if err != nil {
 		return nil, "", err
 	}
 
@@ -58,7 +61,9 @@ ENTRYPOINT ["python3", "-m", "vllm.entrypoints.openai.api_server", \
   "--enable-lora", \
   "--lora-modules", "task-model=${ADAPTER_PATH}"]
 `, task.Name, job.BaseModel.Name)
-	if err := writeZipFile(zw, "Dockerfile", []byte(dockerfile)); err != nil {
+
+	err = writeZipFile(zw, "Dockerfile", []byte(dockerfile))
+	if err != nil {
 		return nil, "", err
 	}
 
@@ -86,21 +91,27 @@ http://localhost:8000/v1/chat/completions
 No platform lock-in: this image runs on your own GPU box, any cloud VM,
 or Kubernetes — not just on this platform's hosted inference.
 `, task.Name, job.BaseModel.Name, task.Type, job.Version, safeAcc(job))
-	if err := writeZipFile(zw, "README.md", []byte(readme)); err != nil {
+
+	err = writeZipFile(zw, "README.md", []byte(readme))
+	if err != nil {
 		return nil, "", err
 	}
 
 	placeholder := []byte("This is a placeholder for the trained LoRA adapter weights (safetensors).\n" +
 		"In the full platform this file contains the actual fine-tuned adapter produced by the training job.\n")
-	if err := writeZipFile(zw, "adapter/weights.safetensors.placeholder", placeholder); err != nil {
+
+	err = writeZipFile(zw, "adapter/weights.safetensors.placeholder", placeholder)
+	if err != nil {
 		return nil, "", err
 	}
 
-	if err := zw.Close(); err != nil {
+	err = zw.Close()
+	if err != nil {
 		return nil, "", err
 	}
 
 	filename = fmt.Sprintf("%s-v%d-export.zip", safeName(task.Name), job.Version)
+
 	return buf.Bytes(), filename, nil
 }
 
@@ -108,6 +119,7 @@ func safeAcc(job *domain.TrainingJob) float64 {
 	if job.Metrics == nil {
 		return 0
 	}
+
 	return job.Metrics.EvalAccuracy
 }
 
@@ -120,9 +132,11 @@ func safeName(s string) string {
 			out = append(out, '-')
 		}
 	}
+
 	if len(out) == 0 {
 		return "task"
 	}
+
 	return string(out)
 }
 
@@ -131,6 +145,8 @@ func writeZipFile(zw *zip.Writer, name string, content []byte) error {
 	if err != nil {
 		return err
 	}
+
 	_, err = w.Write(content)
+
 	return err
 }

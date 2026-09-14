@@ -3,6 +3,7 @@ package simulation
 import (
 	"fmt"
 	"math/rand"
+	time "time"
 
 	"distillery/internal/domain"
 )
@@ -27,16 +28,18 @@ func (g *SyntheticGenerator) Generate(task *domain.Task, seed []*domain.Example,
 	if len(seed) == 0 || count <= 0 {
 		return nil
 	}
+
 	out := make([]*domain.Example, 0, count)
-	for i := 0; i < count; i++ {
+	for range count {
 		base := seed[g.rand.Intn(len(seed))]
 		prefix := variationPrefixes[g.rand.Intn(len(variationPrefixes))]
 		out = append(out, &domain.Example{
 			TaskID: task.ID,
 			Input:  fmt.Sprintf("%s%s", prefix, base.Input),
 			Output: base.Output,
-			Source: domain.SourceSynthetic,
+			Source: domain.SourceSynthetic, ID: "", Flagged: false, FlagNote: "", Duplicate: false, CreatedAt: time.Time{},
 		})
 	}
+
 	return out
 }

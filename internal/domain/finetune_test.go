@@ -9,6 +9,8 @@ import (
 )
 
 func TestProgrammingLanguageConstants(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name  string
 		value domain.ProgrammingLanguage
@@ -31,6 +33,8 @@ func TestProgrammingLanguageConstants(t *testing.T) {
 }
 
 func TestSkillCategoryConstants(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name  string
 		value domain.SkillCategory
@@ -50,6 +54,8 @@ func TestSkillCategoryConstants(t *testing.T) {
 }
 
 func TestRequestStatusConstants(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name  string
 		value domain.RequestStatus
@@ -69,6 +75,8 @@ func TestRequestStatusConstants(t *testing.T) {
 }
 
 func TestJobStatusConstants(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name  string
 		value domain.JobStatus
@@ -88,6 +96,8 @@ func TestJobStatusConstants(t *testing.T) {
 }
 
 func TestMetricTypeConstants(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name  string
 		value domain.MetricType
@@ -107,6 +117,8 @@ func TestMetricTypeConstants(t *testing.T) {
 }
 
 func TestOptimizationActionConstants(t *testing.T) {
+	t.Parallel()
+
 	tests := []struct {
 		name  string
 		value domain.OptimizationAction
@@ -125,6 +137,8 @@ func TestOptimizationActionConstants(t *testing.T) {
 }
 
 func TestFineTuneRequest_JSONRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	now := time.Now().UTC()
 	req := &domain.FineTuneRequest{
 		ID:          "ft_1",
@@ -137,12 +151,12 @@ func TestFineTuneRequest_JSONRoundTrip(t *testing.T) {
 		TrainingParams: domain.TrainingParameters{
 			Epochs:       3,
 			BatchSize:    8,
-			LearningRate: 5e-5,
+			LearningRate: 5e-5, WarmupSteps: 0, MaxSequenceLength: 0, GradientAccumSteps: 0, WeightDecay: 0, SchedulerType: "", OptimizerType: "", PreserveSyntax: false, ContextWindow: 0, BalancedSampling: false,
 		},
 		Owner:     "user_1",
 		Status:    domain.RequestDraft,
 		CreatedAt: now,
-		UpdatedAt: now,
+		UpdatedAt: now, ValidationParams: domain.ValidationParameters{},
 	}
 
 	data, err := json.Marshal(req)
@@ -151,34 +165,44 @@ func TestFineTuneRequest_JSONRoundTrip(t *testing.T) {
 	}
 
 	var decoded domain.FineTuneRequest
-	if err := json.Unmarshal(data, &decoded); err != nil {
+
+	err = json.Unmarshal(data, &decoded)
+	if err != nil {
 		t.Fatalf("expected no unmarshal error, got %v", err)
 	}
 
 	if decoded.ID != req.ID {
 		t.Errorf("expected ID %q, got %q", req.ID, decoded.ID)
 	}
+
 	if decoded.Language != domain.LangPython {
 		t.Errorf("expected language %q, got %q", domain.LangPython, decoded.Language)
 	}
+
 	if decoded.Skill != domain.SkillCodeCompletion {
 		t.Errorf("expected skill %q, got %q", domain.SkillCodeCompletion, decoded.Skill)
 	}
+
 	if decoded.TrainingParams.Epochs != 3 {
 		t.Errorf("expected epochs 3, got %d", decoded.TrainingParams.Epochs)
 	}
+
 	if decoded.TrainingParams.LearningRate != 5e-5 {
 		t.Errorf("expected learning rate 5e-5, got %f", decoded.TrainingParams.LearningRate)
 	}
+
 	if decoded.Status != domain.RequestDraft {
 		t.Errorf("expected status %q, got %q", domain.RequestDraft, decoded.Status)
 	}
+
 	if !decoded.CreatedAt.Equal(now) {
 		t.Errorf("expected CreatedAt %v, got %v", now, decoded.CreatedAt)
 	}
 }
 
 func TestFineTuneJob_JSONRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	now := time.Now().UTC()
 	job := &domain.FineTuneJob{
 		ID:            "ftj_1",
@@ -195,7 +219,7 @@ func TestFineTuneJob_JSONRoundTrip(t *testing.T) {
 		OutputModelID: "model_1",
 		ComputeCost:   12.5,
 		GPUHours:      3.5,
-		CreatedAt:     now,
+		CreatedAt:     now, ValidationLoss: nil, LearningRate: nil, CustomMetrics: nil, BestCheckpoint: domain.CheckpointInfo{}, StartedAt: nil, CompletedAt: nil,
 	}
 
 	data, err := json.Marshal(job)
@@ -204,31 +228,40 @@ func TestFineTuneJob_JSONRoundTrip(t *testing.T) {
 	}
 
 	var decoded domain.FineTuneJob
-	if err := json.Unmarshal(data, &decoded); err != nil {
+
+	err = json.Unmarshal(data, &decoded)
+	if err != nil {
 		t.Fatalf("expected no unmarshal error, got %v", err)
 	}
 
 	if decoded.ID != job.ID {
 		t.Errorf("expected ID %q, got %q", job.ID, decoded.ID)
 	}
+
 	if decoded.Status != domain.JobRunning {
 		t.Errorf("expected status %q, got %q", domain.JobRunning, decoded.Status)
 	}
+
 	if decoded.Progress != 50.0 {
 		t.Errorf("expected progress 50.0, got %f", decoded.Progress)
 	}
+
 	if len(decoded.Loss) != 1 {
 		t.Errorf("expected 1 loss point, got %d", len(decoded.Loss))
 	}
+
 	if decoded.Loss[0].Value != 1.5 {
 		t.Errorf("expected loss value 1.5, got %f", decoded.Loss[0].Value)
 	}
+
 	if decoded.FinalMetrics[string(domain.MetricLoss)] != 1.2 {
 		t.Errorf("expected final loss 1.2, got %f", decoded.FinalMetrics[string(domain.MetricLoss)])
 	}
 }
 
 func TestTrainedModel_JSONRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	now := time.Now().UTC()
 	model := &domain.TrainedModel{
 		ID:              "tm_1",
@@ -258,34 +291,44 @@ func TestTrainedModel_JSONRoundTrip(t *testing.T) {
 	}
 
 	var decoded domain.TrainedModel
-	if err := json.Unmarshal(data, &decoded); err != nil {
+
+	err = json.Unmarshal(data, &decoded)
+	if err != nil {
 		t.Fatalf("expected no unmarshal error, got %v", err)
 	}
 
 	if decoded.ID != model.ID {
 		t.Errorf("expected ID %q, got %q", model.ID, decoded.ID)
 	}
+
 	if decoded.Status != "ready" {
 		t.Errorf("expected status 'ready', got %q", decoded.Status)
 	}
+
 	if !decoded.Quantized {
 		t.Error("expected quantized true")
 	}
+
 	if decoded.QuantBits != 8 {
 		t.Errorf("expected quant bits 8, got %d", decoded.QuantBits)
 	}
+
 	if decoded.BenchmarkScore != 85.5 {
 		t.Errorf("expected benchmark score 85.5, got %f", decoded.BenchmarkScore)
 	}
+
 	if !decoded.IsPublic {
 		t.Error("expected is_public true")
 	}
+
 	if decoded.Downloads != 100 {
 		t.Errorf("expected downloads 100, got %d", decoded.Downloads)
 	}
 }
 
 func TestDatasetInfo_JSONRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	now := time.Now().UTC()
 	dataset := &domain.DatasetInfo{
 		ID:          "ds_1",
@@ -299,7 +342,7 @@ func TestDatasetInfo_JSONRoundTrip(t *testing.T) {
 		Quality: domain.DatasetQuality{
 			OverallScore:    85.0,
 			ValidityRate:    0.95,
-			ComplexityScore: 7.5,
+			ComplexityScore: 7.5, Issues: nil,
 		},
 		Status:    "validated",
 		Owner:     "user_1",
@@ -312,25 +355,32 @@ func TestDatasetInfo_JSONRoundTrip(t *testing.T) {
 	}
 
 	var decoded domain.DatasetInfo
-	if err := json.Unmarshal(data, &decoded); err != nil {
+
+	err = json.Unmarshal(data, &decoded)
+	if err != nil {
 		t.Fatalf("expected no unmarshal error, got %v", err)
 	}
 
 	if decoded.ID != dataset.ID {
 		t.Errorf("expected ID %q, got %q", dataset.ID, decoded.ID)
 	}
+
 	if decoded.FileCount != 1000 {
 		t.Errorf("expected file count 1000, got %d", decoded.FileCount)
 	}
+
 	if decoded.Quality.OverallScore != 85.0 {
 		t.Errorf("expected quality score 85.0, got %f", decoded.Quality.OverallScore)
 	}
+
 	if decoded.Status != "validated" {
 		t.Errorf("expected status 'validated', got %q", decoded.Status)
 	}
 }
 
 func TestMetricPoint_JSONRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	now := time.Now().UTC()
 	point := domain.MetricPoint{
 		Step:      50,
@@ -345,19 +395,24 @@ func TestMetricPoint_JSONRoundTrip(t *testing.T) {
 	}
 
 	var decoded domain.MetricPoint
-	if err := json.Unmarshal(data, &decoded); err != nil {
+
+	err = json.Unmarshal(data, &decoded)
+	if err != nil {
 		t.Fatalf("expected no unmarshal error, got %v", err)
 	}
 
 	if decoded.Step != 50 {
 		t.Errorf("expected step 50, got %d", decoded.Step)
 	}
+
 	if decoded.Value != 2.5 {
 		t.Errorf("expected value 2.5, got %f", decoded.Value)
 	}
 }
 
 func TestCheckpointInfo_JSONRoundTrip(t *testing.T) {
+	t.Parallel()
+
 	cp := domain.CheckpointInfo{
 		Path:    "checkpoints/step-300",
 		Step:    300,
@@ -372,13 +427,16 @@ func TestCheckpointInfo_JSONRoundTrip(t *testing.T) {
 	}
 
 	var decoded domain.CheckpointInfo
-	if err := json.Unmarshal(data, &decoded); err != nil {
+
+	err = json.Unmarshal(data, &decoded)
+	if err != nil {
 		t.Fatalf("expected no unmarshal error, got %v", err)
 	}
 
 	if decoded.Path != cp.Path {
 		t.Errorf("expected path %q, got %q", cp.Path, decoded.Path)
 	}
+
 	if decoded.IsBest != true {
 		t.Error("expected is_best true")
 	}

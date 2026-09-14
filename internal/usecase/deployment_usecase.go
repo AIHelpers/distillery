@@ -47,62 +47,37 @@ func NewDeploymentUsecase(
 // It returns the deployment plus the raw API key — the key is only ever
 // available at this moment; only its hash is persisted.
 func (u *DeploymentUsecase) Deploy(taskID string, autoscale bool) (*domain.Deployment, string, error) {
-	if _, err := u.tasks.Get(taskID); err != nil {
+	_, err := u.tasks.Get(taskID)
+	if err != nil {
 		return nil, "", err
 	}
+
 	job, err := u.jobs.LatestCompleted(taskID)
 	if err != nil {
 		return nil, "", err
 	}
+
 	return u.deployJob(taskID, job, autoscale)
 }
 
 // DeployVersion deploys a specific (completed) training job version for the
 // task, enabling model comparison and rollback to an earlier fine-tune.
 func (u *DeploymentUsecase) DeployVersion(taskID, jobID string, autoscale bool) (*domain.Deployment, string, error) {
-	if _, err := u.tasks.Get(taskID); err != nil {
+	_, err := u.tasks.Get(taskID)
+	if err != nil {
 		return nil, "", err
 	}
+
 	job, err := u.jobs.Get(jobID)
 	if err != nil {
 		return nil, "", err
 	}
+
 	if job.TaskID != taskID || job.Status != domain.TrainingCompleted {
 		return nil, "", domain.ErrNoModel
 	}
+
 	return u.deployJob(taskID, job, autoscale)
-}
-
-func (u *DeploymentUsecase) deployJob(
-	taskID string,
-	job *domain.TrainingJob,
-	autoscale bool,
-) (*domain.Deployment, string, error) {
-	// Stop any currently active deployment for this task before deploying anew.
-	if active, err := u.deployments.GetActiveForTask(taskID); err == nil {
-		active.Status = domain.DeploymentStopped
-		_ = u.deployments.Update(active)
-	}
-
-	id := u.idGen.NewID("dep")
-	rawKey, keyHash, err := generateAPIKey()
-	if err != nil {
-		return nil, "", err
-	}
-	d := &domain.Deployment{
-		ID:            id,
-		TaskID:        taskID,
-		TrainingJobID: job.ID,
-		Endpoint:      fmt.Sprintf("/api/v1/inference/%s/predict", id),
-		Autoscale:     autoscale,
-		Status:        domain.DeploymentActive,
-		APIKeyHash:    keyHash,
-		CreatedAt:     time.Now().UTC(),
-	}
-	if err := u.deployments.Create(d); err != nil {
-		return nil, "", err
-	}
-	return d, rawKey, nil
 }
 
 func (u *DeploymentUsecase) GetActiveDeployment(taskID string) (*domain.Deployment, error) {
@@ -118,34 +93,10 @@ func (u *DeploymentUsecase) StopDeployment(id string) error {
 	if err != nil {
 		return err
 	}
+
 	d.Status = domain.DeploymentStopped
+
 	return u.deployments.Update(d)
-}
-
-// authorize checks the presented raw API key against the deployment's
-// stored hash using a constant-time comparison.
-func (u *DeploymentUsecase) authorize(d *domain.Deployment, apiKey string) error {
-	if apiKey == "" || d.APIKeyHash == "" {
-		return domain.ErrUnauthorized
-	}
-	if subtle.ConstantTimeCompare([]byte(hashAPIKey(apiKey)), []byte(d.APIKeyHash)) != 1 {
-		return domain.ErrUnauthorized
-	}
-	return nil
-}
-
-func (u *DeploymentUsecase) usableExamples(taskID string) ([]*domain.Example, error) {
-	examples, err := u.examples.ListByTask(taskID)
-	if err != nil {
-		return nil, err
-	}
-	var usable []*domain.Example
-	for _, e := range examples {
-		if !e.Duplicate && !e.Flagged {
-			usable = append(usable, e)
-		}
-	}
-	return usable, nil
 }
 
 // Invoke calls the deployed endpoint by ID with a raw input string,
@@ -155,20 +106,26 @@ func (u *DeploymentUsecase) Invoke(deploymentID, apiKey, input string) (output s
 	if err != nil {
 		return "", 0, err
 	}
-	if err := u.authorize(d, apiKey); err != nil {
+
+	err = u.authorize(d, apiKey)
+	if err != nil {
 		return "", 0, err
 	}
+
 	if d.Status != domain.DeploymentActive {
 		return "", 0, domain.ErrNoDeployment
 	}
+
 	job, err := u.jobs.Get(d.TrainingJobID)
 	if err != nil {
 		return "", 0, err
 	}
+
 	usable, err := u.usableExamples(d.TaskID)
 	if err != nil {
 		return "", 0, err
 	}
+
 	output, confidence = u.engine.Predict(job, usable, input)
 
 	d.RequestCount++
@@ -191,16 +148,21 @@ func (u *DeploymentUsecase) InvokeBatch(deploymentID, apiKey string, inputs []st
 	if err != nil {
 		return nil, err
 	}
-	if err := u.authorize(d, apiKey); err != nil {
+
+	err = u.authorize(d, apiKey)
+	if err != nil {
 		return nil, err
 	}
+
 	if d.Status != domain.DeploymentActive {
 		return nil, domain.ErrNoDeployment
 	}
+
 	job, err := u.jobs.Get(d.TrainingJobID)
 	if err != nil {
 		return nil, err
 	}
+
 	usable, err := u.usableExamples(d.TaskID)
 	if err != nil {
 		return nil, err
@@ -212,6 +174,7 @@ func (u *DeploymentUsecase) InvokeBatch(deploymentID, apiKey string, inputs []st
 		if in == "" {
 			continue
 		}
+
 		out, conf := u.engine.Predict(job, usable, in)
 		results = append(results, BatchResult{Input: in, Output: out, Confidence: conf})
 	}
@@ -229,19 +192,96 @@ func (u *DeploymentUsecase) Export(taskID string) (data []byte, filename string,
 	if err != nil {
 		return nil, "", err
 	}
+
 	job, err := u.jobs.LatestCompleted(taskID)
 	if err != nil {
 		return nil, "", err
 	}
+
 	return u.exporter.BuildExport(task, job)
+}
+
+// --- unexported helpers ---.
+
+func (u *DeploymentUsecase) deployJob(
+	taskID string,
+	job *domain.TrainingJob,
+	autoscale bool,
+) (*domain.Deployment, string, error) {
+	// Stop any currently active deployment for this task before deploying anew.
+	active, err := u.deployments.GetActiveForTask(taskID)
+	if err == nil {
+		active.Status = domain.DeploymentStopped
+		_ = u.deployments.Update(active)
+	}
+
+	id := u.idGen.NewID("dep")
+
+	rawKey, keyHash, err := generateAPIKey()
+	if err != nil {
+		return nil, "", err
+	}
+
+	d := &domain.Deployment{
+		ID:            id,
+		TaskID:        taskID,
+		TrainingJobID: job.ID,
+		Endpoint:      fmt.Sprintf("/api/v1/inference/%s/predict", id),
+		Autoscale:     autoscale,
+		Status:        domain.DeploymentActive,
+		APIKeyHash:    keyHash,
+		CreatedAt:     time.Now().UTC(), RequestCount: 0,
+	}
+
+	err = u.deployments.Create(d)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return d, rawKey, nil
+}
+
+// authorize checks the presented raw API key against the deployment's
+// stored hash using a constant-time comparison.
+func (u *DeploymentUsecase) authorize(d *domain.Deployment, apiKey string) error {
+	if apiKey == "" || d.APIKeyHash == "" {
+		return domain.ErrUnauthorized
+	}
+
+	if subtle.ConstantTimeCompare([]byte(hashAPIKey(apiKey)), []byte(d.APIKeyHash)) != 1 {
+		return domain.ErrUnauthorized
+	}
+
+	return nil
+}
+
+func (u *DeploymentUsecase) usableExamples(taskID string) ([]*domain.Example, error) {
+	examples, err := u.examples.ListByTask(taskID)
+	if err != nil {
+		return nil, err
+	}
+
+	var usable []*domain.Example
+
+	for _, e := range examples {
+		if !e.Duplicate && !e.Flagged {
+			usable = append(usable, e)
+		}
+	}
+
+	return usable, nil
 }
 
 func generateAPIKey() (raw, hash string, err error) {
 	b := make([]byte, 24)
-	if _, err = rand.Read(b); err != nil {
+
+	_, err = rand.Read(b)
+	if err != nil {
 		return "", "", err
 	}
+
 	raw = "sk_" + hex.EncodeToString(b)
+
 	return raw, hashAPIKey(raw), nil
 }
 
