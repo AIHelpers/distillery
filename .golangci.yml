@@ -39,16 +39,59 @@ linters:
   # Enable additional linters that are useful for this project.
   enable:
     - bidichk
+    - containedctx
+    - contextcheck
+    - copyloopvar
+    - cyclop
+    - decorder
+    - depguard
+    - dupl
+    - embeddedstructfieldcheck
+    - err113
+    - errcheck
+    - errchkjson
+    - errname
+    - errorlint
+    - exhaustive
+    - exhaustruct_v5
+    - fatcontext
+    - funcorder
+    - funlen
+    - gocognit
+    - goconst
     - gocritic
     - godot
+    - godox
+    - gosec
+    - govet
+    - iface
+    - interfacebloat
+    - intrange
+    - ireturn
     - misspell
+    - mnd
     - lll
     - nakedret
     - nilnil
     - nosprintfhostport
+    - noctx
+    - noinlineerr
+    - paralleltest
+    - perfsprint
+    - prealloc
+    - revive
+    - staticcheck
+    - testifylint
+    - testpackage
+    - thelper
+    - tparallel
     - unconvert
+    - unparam
+    - unused
+    - whitespace
+    - wsl_v5
     - wastedassign
-    - gomodguard
+    - gomodguard_v2
   # Disable linters that produce noise in this codebase.
   disable:
     - wrapcheck  # wrapping every stdlib error adds noise without much value here

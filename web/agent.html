@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Distillery — Agent Monitor</title>
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    .agent-table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    .agent-table th, .agent-table td { text-align: left; padding: 8px; border-bottom: 1px solid var(--charcoal-3); }
+    .status-badge { padding: 3px 8px; border-radius: 8px; font-size: 12px; }
+    .status-idle { background: #444; color: #fff; }
+    .status-thinking { background: #2a6fb0; color: #fff; }
+    .status-executing { background: #b0782a; color: #fff; }
+    .status-done { background: #2a8a3a; color: #fff; }
+    .status-error { background: #a03535; color: #fff; }
+    .status-paused { background: #777; color: #fff; }
+    .tool-call-row { font-family: var(--font-mono); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand"><img src="/static/logo.svg" alt="" class="brand-icon" /> Distillery</div>
+      <div class="tagline">AI Agent Monitor</div>
+      <nav class="subnav">
+        <a href="/">Tasks</a>
+        <a href="/agent.html" class="active">Agents</a>
+      </nav>
+    </header>
+    <main class="main" style="padding: 20px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <h2 style="margin:0;">Agent Orchestration</h2>
+        <div>
+          <button class="btn primary" id="refresh-btn">Refresh</button>
+          <button class="btn" id="new-agent-btn">+ New Fine-Tuning Agent</button>
+        </div>
+      </div>
+
+      <div id="agent-list-container"></div>
+      <div id="agent-detail-container"></div>
+    </main>
+  </div>
+  <div id="modal-root"></div>
+
+  <script>
+    const API = "/api/v1";
+    const statusClass = { idle:"status-idle", thinking:"status-thinking", executing:"status-executing", done:"status-done", error:"status-error", paused:"status-paused" };
+
+    async function api(method, path, body) {
+      const opts = { method, headers: {} };
+      if (body !== undefined) { opts.headers["Content-Type"]="application/json"; opts.body=JSON.stringify(body); }
+      const res = await fetch(API+path, opts);
+      if (res.status === 204) return null;
+      const isJSON = (res.headers.get("content-type")||"").includes("application/json");
+      const data = isJSON ? await res.json() : null;
+      if (!res.ok) throw new Error((data && data.error) || "Request failed");
+      return data;
+    }
+
+    async function loadAgents() {
+      const agents = (await api("GET", "/agents")) || [];
+      const container = document.getElementById("agent-list-container");
+      if (agents.length === 0) {
+        container.innerHTML = '<p class="muted">No agents yet. Start a fine-tuning agent to orchestrate dataset validation, model selection, and training automatically.</p>';
+        return;
+      }
+      let html = '<table class="agent-table"><thead><tr><th>Agent ID</th><th>Name</th><th>Status</th><th>Progress</th><th>Current Task</th><th>Tools Used</th><th>Actions</th></tr></thead><tbody>';
+      for (const a of agents) {
+        const toolsUsed = a.tool_calls ? a.tool_calls.length : 0;
+        html += `<tr>
+          <td class="tool-call-row">${a.id}</td>
+          <td>${a.current_task ? "FineTuningAgent" : ""}</td>
+          <td><span class="status-badge ${statusClass[a.status]||"status-idle"}">${a.status||"idle"}</span></td>
+          <td><progress value="${a.progress||0}" max="100" style="width:80px;"></progress> ${a.progress||0}%</td>
+          <td>${escapeHtml((a.current_task||"").slice(0,80))}</td>
+          <td>${toolsUsed}</td>
+          <td><button class="btn" onclick="showAgent('${a.id}')">View</button></td>
+        </tr>`;
+      }
+      html += '</tbody></table>';
+      container.innerHTML = html;
+    }
+
+    async function showAgent(id) {
+      const a = await api("GET", "/agents/"+id);
+      const container = document.getElementById("agent-detail-container");
+      let toolHtml = '';
+      if (a.tool_calls && a.tool_calls.length) {
+        toolHtml = '<h4>Tool Calls</h4><table class="agent-table"><thead><tr><th>Tool</th><th>Status</th><th>Input</th><th>Result</th></tr></thead><tbody>';
+        for (const tc of a.tool_calls) {
+          toolHtml += `<tr><td class="tool-call-row">${escapeHtml(tc.tool_name)}</td><td>${escapeHtml(tc.status)}</td><td>${escapeHtml(JSON.stringify(tc.input||{}))}</td><td>${escapeHtml(JSON.stringify(tc.output&&tc.output.result||tc.error||""))}</td></tr>`;
+        }
+        toolHtml += '</tbody></table>';
+      }
+      let historyHtml = '';
+      if (a.history && a.history.length) {
+        historyHtml = '<h4>Conversation</h4><div class="conversation" style="background:var(--charcoal);border:1px solid var(--charcoal-3);padding:12px;border-radius:4px;font-family:var(--font-mono);font-size:13px;">';
+        for (const m of a.history) {
+          historyHtml += `<p><strong>${escapeHtml(m.role)}</strong>: ${escapeHtml(m.content)}</p>`;
+        }
+        historyHtml += '</div>';
+      }
+      container.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:20px;">
+          <h3>Agent: <span class="tool-call-row">${escapeHtml(a.id)}</span></h3>
+          <div>
+            <button class="btn ghost" onclick="pauseAgent('${a.id}')">Pause</button>
+            <button class="btn ghost" onclick="resumeAgent('${a.id}')">Resume</button>
+            <button class="btn ghost" onclick="document.getElementById('agent-detail-container').innerHTML=''">Close</button>
+          </div>
+        </div>
+        <p>Status: <span class="status-badge ${statusClass[a.status]||"status-idle"}">${escapeHtml(a.status||"idle")}</span></p>
+        <p>Current Task: ${escapeHtml(a.current_task||"")}</p>
+        ${historyHtml}
+        ${toolHtml}
+      `;
+      container.scrollIntoView({behavior:"smooth"});
+    }
+
+    async function pauseAgent(id){ await api("POST", "/agents/"+id+"/pause"); toast("Agent paused"); loadAgents(); setTimeout(()=>showAgent(id),300); }
+    async function resumeAgent(id){ await api("POST", "/agents/"+id+"/resume"); toast("Agent resumed"); loadAgents(); setTimeout(()=>showAgent(id),300); }
+
+    function showNewAgentModal() {
+      const root = document.getElementById("modal-root");
+      root.innerHTML = `
+        <div class="modal-backdrop" id="modal-backdrop">
+          <div class="modal">
+            <h3>Start Fine-Tuning Agent</h3>
+            <label>Task ID</label>
+            <input type="text" id="na-taskid" placeholder="task_xxxx" />
+            <label>Base Model</label>
+            <input type="text" id="na-model" placeholder="gpt2" value="gpt2" />
+            <label>Dataset ID</label>
+            <input type="text" id="na-dataset" placeholder="dataset_xxxx" />
+            <div class="modal-actions">
+              <button class="btn ghost" id="na-cancel">Cancel</button>
+              <button class="btn primary" id="na-start">Start Agent</button>
+            </div>
+          </div>
+        </div>`;
+      document.getElementById("na-cancel").onclick = () => root.innerHTML="";
+      document.getElementById("modal-backdrop").onclick = (e)=>{ if(e.target.id==="modal-backdrop") root.innerHTML=""; };
+      document.getElementById("na-start").onclick = async () => {
+        try {
+          const state = await api("POST", "/agents/fine-tuning", {
+            taskID: document.getElementById("na-taskid").value.trim(),
+            baseModel: document.getElementById("na-model").value.trim()||"gpt2",
+            datasetID: document.getElementById("na-dataset").value.trim(),
+          });
+          root.innerHTML="";
+          toast("Agent started successfully");
+          await loadAgents();
+          if (state && state.id) setTimeout(()=>showAgent(state.id),300);
+        } catch (err) { toast(err.message, true); }
+      };
+    }
+
+function escapeHtml(s){ const amp=String.fromCharCode(38), lt=String.fromCharCode(60), gt=String.fromCharCode(62), q=String.fromCharCode(34); return String(s||"").replace(new RegExp('['+amp+lt+gt+q+']','g'),function(c){ if(c===amp)return amp+'amp;'; if(c===lt)return amp+'lt;'; if(c===gt)return amp+'gt;'; return amp+'quot;'; }); }
+    function toast(msg, isError){ const el=document.createElement("div"); el.className="toast"+(isError?" error":""); el.textContent=msg; document.body.appendChild(el); setTimeout(()=>el.remove(),3500); }
+
+    document.getElementById("refresh-btn").onclick = loadAgents;
+    document.getElementById("new-agent-btn").onclick = showNewAgentModal;
+    loadAgents();
+    setInterval(loadAgents, 5000);
+  </script>
+</body>
+</html>
+</｜DSML｜>
+<task_progress>
+- [x] Explore existing codebase structure and conventions
+- [x] Implement domain layer (agent.go, agent_entities.go, tools.go, tool_types.go)
+- [x] Implement repository layer (agent_repo.go, store.go update, agent_memory.go, tool_registry.go)
+- [x] Implement infra agent layer (llm_provider.go, reflect_agent.go, tools.go)
+- [x] Implement usecase layer (agent_orchestration.go)
+- [x] Implement HTTP delivery layer (agent_handler.go, router.go)
+- [x] Wire up composition root (cmd/server/main.go)
+- [x] Add web UI for agent monitoring (web/agent.html)
+- [ ] Build and test the implementation
+</task_progress>
+</write_to_file>[]()[]()
+
+<write_to_file>
+<path>web/embed.go</path>
+<content>// Package web embeds the static single-page UI so the server binary is
+// fully self-contained — no separate asset directory needed at runtime,
+// which keeps both the desktop and container deployment paths simple.
+package web
+
+import (
+	"embed"
+	"io/fs"
+)
+
+//go:embed index.html agent.html static/*
+var files embed.FS
+
+// FS returns the embedded web UI filesystem rooted at the web directory.
+func FS() fs.FS {
+	return files
+}

@@ -14,6 +14,7 @@ type Handlers struct {
 	Training   *TrainingHandler
 	Deployment *DeploymentHandler
 	Feedback   *FeedbackHandler
+	Agent      *AgentHandler
 }
 
 // NewRouter builds the full HTTP handler: the JSON API under /api/v1 plus
@@ -101,6 +102,15 @@ func NewRouter(h Handlers, webFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/v1/tasks/{taskID}/feedback/fold", func(w http.ResponseWriter, r *http.Request) {
 		h.Feedback.Fold(w, r, r.PathValue("taskID"))
 	})
+
+	// --- Agents ---.
+	if h.Agent != nil {
+		mux.HandleFunc("POST /api/v1/agents/fine-tuning", h.Agent.StartFineTuningAgent)
+		mux.HandleFunc("GET /api/v1/agents", h.Agent.ListAgentStates)
+		mux.HandleFunc("GET /api/v1/agents/{agentID}", h.Agent.GetAgentState)
+		mux.HandleFunc("POST /api/v1/agents/{agentID}/pause", h.Agent.PauseAgent)
+		mux.HandleFunc("POST /api/v1/agents/{agentID}/resume", h.Agent.ResumeAgent)
+	}
 
 	// --- Health check (useful for container orchestrators) ---.
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {

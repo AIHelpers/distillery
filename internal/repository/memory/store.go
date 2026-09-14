@@ -20,6 +20,7 @@ type snapshot struct {
 	TrainingJobs map[string][]*domain.TrainingJob   `json:"training_jobs"` // keyed by task ID.
 	Deployments  map[string][]*domain.Deployment    `json:"deployments"`   // keyed by task ID.
 	Feedback     map[string][]*domain.Misprediction `json:"feedback"`      // keyed by task ID.
+	Agents       map[string]domain.AgentState       `json:"agents"`
 }
 
 // Store is the shared in-memory database backing all repositories, with
@@ -33,6 +34,7 @@ type Store struct {
 	TrainingJobs map[string][]*domain.TrainingJob
 	Deployments  map[string][]*domain.Deployment
 	Feedback     map[string][]*domain.Misprediction
+	Agents       map[string]domain.AgentState
 }
 
 // NewStore creates a store. If path is non-empty and an existing snapshot
@@ -45,6 +47,7 @@ func NewStore(path string) *Store {
 		TrainingJobs: map[string][]*domain.TrainingJob{},
 		Deployments:  map[string][]*domain.Deployment{},
 		Feedback:     map[string][]*domain.Misprediction{},
+		Agents:       map[string]domain.AgentState{},
 	}
 	s.load()
 	return s
@@ -77,6 +80,9 @@ func (s *Store) load() {
 	if snap.Feedback != nil {
 		s.Feedback = snap.Feedback
 	}
+	if snap.Agents != nil {
+		s.Agents = snap.Agents
+	}
 }
 
 // persist writes the current state to disk. Caller must hold s.mu (read or write).
@@ -90,6 +96,7 @@ func (s *Store) persist() {
 		TrainingJobs: s.TrainingJobs,
 		Deployments:  s.Deployments,
 		Feedback:     s.Feedback,
+		Agents:       s.Agents,
 	}
 	b, err := json.MarshalIndent(snap, "", "  ")
 	if err != nil {

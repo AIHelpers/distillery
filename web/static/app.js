@@ -94,7 +94,7 @@ function showNewTaskModal() {
         <h3>New Task</h3>
         <label>Task name</label>
         <input type="text" id="nt-name" placeholder="e.g. Support Ticket Router" />
-        <label>Description (plain English)</label>
+        <label>Description</label>
         <textarea id="nt-desc" rows="3" placeholder="Classify incoming support tickets into billing, technical, or account categories."></textarea>
         <label>Task type</label>
         <select id="nt-type" style="width:100%;background:var(--charcoal);color:var(--paper);border:1px solid var(--charcoal-3);border-radius:3px;padding:9px 11px;font-family:var(--font-mono);font-size:13px;">

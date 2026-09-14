@@ -35,7 +35,7 @@ A `Makefile` wraps both (`make run`, `make docker-build`, `make docker-run`).
 
 ## Using it
 
-1. **New Task** — describe the task in plain English and pick a type
+1. **New Task** — describe the task and pick a type
    (classification / extraction / generation).
 2. **Dataset tab** — paste `input -> output` example pairs, upload a CSV
    (`input`/`output` columns), or generate synthetic variations to bootstrap

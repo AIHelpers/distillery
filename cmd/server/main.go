@@ -16,6 +16,7 @@ import (
 	"runtime"
 
 	deliveryhttp "distillery/internal/delivery/http"
+	infraagent "distillery/internal/infra/agent"
 	"distillery/internal/infra/simulation"
 	"distillery/internal/repository/memory"
 	"distillery/internal/usecase"
@@ -34,6 +35,7 @@ func main() {
 	trainingRepo := memory.NewTrainingRepo(store)
 	deploymentRepo := memory.NewDeploymentRepo(store)
 	feedbackRepo := memory.NewFeedbackRepo(store)
+	agentRepo := memory.NewAgentRepo(store)
 
 	// --- Simulated infra (stands in for GPU orchestration / model serving) ---.
 	modelSelector := simulation.NewModelSelector()
@@ -54,6 +56,14 @@ func main() {
 	)
 	feedbackUC := usecase.NewFeedbackUsecase(taskRepo, feedbackRepo, exampleRepo, idGen)
 
+	// --- Agent orchestration ---.
+	toolReg := memory.NewToolRegistry()
+	toolReg.Register(infraagent.NewDatasetValidatorTool(taskRepo))
+	toolReg.Register(infraagent.NewModelSelectorTool())
+	toolReg.Register(infraagent.NewTrainingControllerTool(taskRepo))
+	llmProvider := infraagent.NewSimulatedLLMProvider()
+	agentOrchUC := usecase.NewAgentOrchestrationUsecase(agentRepo, toolReg, llmProvider, taskRepo, idGen)
+
 	// --- Delivery ---.
 	handlers := deliveryhttp.Handlers{
 		Task:       deliveryhttp.NewTaskHandler(taskUC),
@@ -61,6 +71,7 @@ func main() {
 		Training:   deliveryhttp.NewTrainingHandler(trainingUC),
 		Deployment: deliveryhttp.NewDeploymentHandler(deploymentUC),
 		Feedback:   deliveryhttp.NewFeedbackHandler(feedbackUC),
+		Agent:      deliveryhttp.NewAgentHandler(agentOrchUC),
 	}
 	router := deliveryhttp.NewRouter(handlers, web.FS())
 
