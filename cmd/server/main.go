@@ -15,11 +15,14 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 
 	deliveryhttp "distillery/internal/delivery/http"
+	"distillery/internal/domain"
 	"distillery/internal/exhaustruct"
 	infraagent "distillery/internal/infra/agent"
 	"distillery/internal/infra/simulation"
+	localtraining "distillery/internal/infra/training"
 	"distillery/internal/repository/memory"
 	"distillery/internal/usecase"
 	"distillery/web"
@@ -51,12 +54,31 @@ func main() {
 	ftModelRepo := memory.NewTrainedModelRepo(store)
 	ftDatasetRepo := memory.NewDatasetRepo(store)
 
-	// --- Simulated infra (stands in for GPU orchestration / model serving) ---.
+	// --- Infra (GPU orchestration / model serving) ---.
+	//
+	// TRAINING_BACKEND selects which adapter implements domain.FineTuner:
+	//   "simulation"  → fake progress/loss curves (default; no GPU needed)
+	//   "local"       → real QLoRA fine-tuning via the Python trainer worker
 	modelSelector := simulation.NewModelSelector()
 	synthGen := simulation.NewSyntheticGenerator()
-	tuner := simulation.NewFineTuner()
+
+	backend := envOr("TRAINING_BACKEND", "simulation")
+
+	var tuner domain.FineTuner
+	var exporter domain.Exporter
+	if backend == "local" {
+		trainingCfg := localtraining.Config{
+			CPUFallback:   envOr("TRAINING_CPU_FALLBACK", "false") == "true",
+			MaxJobHistory: envInt("TRAINING_MAX_JOB_HISTORY", 0),
+		}
+		tuner = localtraining.NewLocalTrainer(trainingCfg)
+		exporter = localtraining.NewLocalExporter(trainingCfg)
+	} else {
+		tuner = simulation.NewFineTuner()
+		exporter = simulation.NewExporter()
+	}
+
 	inferenceEngine := simulation.NewInferenceEngine()
-	exporter := simulation.NewExporter()
 
 	idGen := usecase.NewRandomIDGenerator()
 
@@ -75,6 +97,7 @@ func main() {
 	_ = toolReg.Register(infraagent.NewDatasetValidatorTool(taskRepo))
 	_ = toolReg.Register(infraagent.NewModelSelectorTool())
 	_ = toolReg.Register(infraagent.NewTrainingControllerTool(taskRepo))
+	_ = toolReg.Register(infraagent.NewCodeEvaluatorTool())
 
 	llmProvider := infraagent.NewSimulatedLLMProvider()
 	agentOrchUC := usecase.NewAgentOrchestrationUsecase(agentRepo, toolReg, llmProvider, taskRepo, idGen)
@@ -124,6 +147,16 @@ func runExhaustruct() {
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
+	}
+
+	return def
+}
+
+func envInt(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
 	}
 
 	return def

@@ -69,6 +69,8 @@ func NewRouter(h Handlers, webFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /api/v1/training/{jobID}", func(w http.ResponseWriter, r *http.Request) {
 		h.Training.Get(w, r, r.PathValue("jobID"))
 	})
+	// List the base-model catalog the user can pick from for fine-tuning.
+	mux.HandleFunc("GET /api/v1/models", h.Training.Models)
 
 	// --- Deployment / inference / export ---.
 	mux.HandleFunc("POST /api/v1/tasks/{taskID}/deploy", func(w http.ResponseWriter, r *http.Request) {

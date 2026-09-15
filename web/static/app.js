@@ -5,6 +5,10 @@ const state = {
   activeTaskId: null,
   activeTab: "dataset",
   pollTimer: null,
+  // The user's chosen base model for fine-tuning, keyed by task ID. This
+  // lets the dropdown survive the 1.5s progress polls without resetting
+  // the user's selection.
+  selectedBaseModel: {},
   // API keys are only ever returned once, at deploy time — kept in memory
   // for this browser session only (never persisted), keyed by deployment ID.
   apiKeys: {},
@@ -195,8 +199,18 @@ async function renderTaskDetail() {
   ]);
   applyActiveTab();
 
-  state.pollTimer = setInterval(() => {
-    if (state.activeTaskId === task.id) renderTrainingPanel(task);
+  state.pollTimer = setInterval(async () => {
+    if (state.activeTaskId !== task.id) return;
+    // Only re-render the training panel when a training run is actively
+    // progressing — otherwise the 1.5s refresh would reset the model
+    // dropdown while the user is still choosing one.
+    try {
+      const jobs = await api("GET", `/tasks/${task.id}/training`);
+      const hasActive = (jobs || []).some((j) => j.status === "queued" || j.status === "running");
+      if (hasActive) renderTrainingPanel(task);
+    } catch (e) {
+      // Transient network errors are safe to ignore during polling.
+    }
   }, 1500);
 }
 
@@ -464,11 +478,12 @@ function renderExamplesTable(examples) {
 async function renderTrainingPanel(task) {
   const panel = document.getElementById("panel-training");
   if (!panel) return;
-  let jobs, stats;
+  let jobs, stats, models;
   try {
-    [jobs, stats] = await Promise.all([
+    [jobs, stats, models] = await Promise.all([
       api("GET", `/tasks/${task.id}/training`),
       api("GET", `/tasks/${task.id}/dataset/stats`).catch(() => null),
+      api("GET", "/models").catch(() => []),
     ]);
   } catch (e) {
     panel.innerHTML = `<div class="card">Failed to load training jobs: ${escapeHtml(e.message)}</div>`;
@@ -477,12 +492,29 @@ async function renderTrainingPanel(task) {
   jobs = (jobs || []).slice().sort((a, b) => b.version - a.version);
   const hasActive = jobs.some((j) => j.status === "queued" || j.status === "running");
   const ready = stats && stats.ready_to_train;
+  const recommendedModel = stats && stats.recommended_model ? stats.recommended_model : null;
+
+  const modelOptions = (models || [])
+    .map(
+      (m) =>
+        `<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)} · ${m.params_billions}B params · ${m.family}</option>`
+    )
+    .join("");
 
   panel.innerHTML = `
     <div class="card">
       <h3>Start fine-tuning</h3>
-      <p class="hint">Distillery automatically right-sizes an open base model (Llama / Mistral / Qwen family)
-      to your task's complexity, then runs a LoRA/QLoRA fine-tune.</p>
+      <p class="hint">Choose the base model to fine-tune. Distillery pre-selects the recommended open-weights model
+      (Llama / Mistral / Qwen family) for your task, but you can override it and run a LoRA/QLoRA fine-tune on any model below.</p>
+      <div class="inline-form" style="align-items:flex-end; margin-bottom:12px;">
+        <div class="field" style="flex:1;">
+          <label>Base model</label>
+          <select id="base-model-select" ${hasActive || !ready ? "disabled" : ""} style="width:100%;background:var(--charcoal);color:var(--paper);border:1px solid var(--charcoal-3);border-radius:3px;padding:9px 11px;font-family:var(--font-mono);font-size:13px;">
+            ${modelOptions || '<option value="">No models available</option>'}
+          </select>
+          ${recommendedModel ? `<div class="hint">Recommended for your dataset: <span class="source-tag">${escapeHtml(recommendedModel.name)}</span></div>` : ""}
+        </div>
+      </div>
       <button class="btn primary" id="start-training-btn" ${hasActive || !ready ? "disabled" : ""}>
         ${hasActive ? "Training in progress…" : "Start fine-tuning run"}
       </button>
@@ -494,12 +526,40 @@ async function renderTrainingPanel(task) {
     </div>
   `;
 
+  // Pre-select the user's explicit choice (if they've made one) or the
+  // auto-recommended model so they always have a sensible default but keep
+  // control. The selected value is persisted in state so the 1.5s progress
+  // polls don't reset it.
+  const sel = document.getElementById("base-model-select");
+  let selected = state.selectedBaseModel[task.id];
+  if (!selected && recommendedModel) {
+    selected = recommendedModel.name;
+  }
+  if (sel && sel.options.length > 0) {
+    const matched = Array.from(sel.options).find((o) => o.value === (selected || ""));
+    if (matched) {
+      sel.value = matched.value;
+    } else if (selected) {
+      // The stored selection isn't in the catalog anymore — fall back to first option.
+      sel.value = sel.options[0].value;
+    }
+  }
+
+  // Persist the user's choice on change (not during polling re-renders).
+  if (sel) {
+    sel.onchange = () => {
+      state.selectedBaseModel[task.id] = sel.value;
+    };
+  }
+
   const startBtn = document.getElementById("start-training-btn");
   if (startBtn) {
     startBtn.onclick = async () => {
+      const baseModel = (document.getElementById("base-model-select") || {}).value || "";
       try {
-        await api("POST", `/tasks/${task.id}/training`);
-        toast("Fine-tuning started.");
+        await api("POST", `/tasks/${task.id}/training`, { base_model: baseModel });
+        state.selectedBaseModel[task.id] = baseModel || "";
+        toast(`Fine-tuning started on ${baseModel || "recommended model"}.`);
         renderTrainingPanel(task);
       } catch (e) {
         toast(e.message, true);

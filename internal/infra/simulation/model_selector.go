@@ -12,12 +12,70 @@ type ModelSelector struct {
 func NewModelSelector() *ModelSelector {
 	return &ModelSelector{
 		Catalog: []domain.BaseModel{
-			{Name: "Qwen2.5-0.5B-Instruct", ParamsBillions: 0.5, Family: "Qwen"},
-			{Name: "Llama-3.2-3B-Instruct", ParamsBillions: 3, Family: "Llama"},
-			{Name: "Mistral-7B-Instruct-v0.3", ParamsBillions: 7, Family: "Mistral"},
-			{Name: "Qwen2.5-14B-Instruct", ParamsBillions: 14, Family: "Qwen"},
+			{
+				Name:             "Qwen2.5-0.5B-Instruct",
+				ParamsBillions:   0.5,
+				Family:           "Qwen",
+				RepoID:           "Qwen/Qwen2.5-0.5B-Instruct",
+				MinVRAMGB:        2,
+				RecommendedQuant: "4bit-nf4",
+			},
+			{
+				Name:             "Qwen2.5-1.5B-Instruct",
+				ParamsBillions:   1.5,
+				Family:           "Qwen",
+				RepoID:           "Qwen/Qwen2.5-1.5B-Instruct",
+				MinVRAMGB:        4,
+				RecommendedQuant: "4bit-nf4",
+			},
+			{
+				Name:             "Llama-3.2-1B-Instruct",
+				ParamsBillions:   1.0,
+				Family:           "Llama",
+				RepoID:           "meta-llama/Llama-3.2-1B-Instruct",
+				MinVRAMGB:        2,
+				RecommendedQuant: "4bit-nf4",
+			},
+			{
+				Name:             "Llama-3.2-3B-Instruct",
+				ParamsBillions:   3,
+				Family:           "Llama",
+				RepoID:           "meta-llama/Llama-3.2-3B-Instruct",
+				MinVRAMGB:        6,
+				RecommendedQuant: "4bit-nf4",
+			},
+			{
+				Name:             "Phi-3.5-mini-instruct",
+				ParamsBillions:   3.8,
+				Family:           "Phi",
+				RepoID:           "microsoft/Phi-3.5-mini-instruct",
+				MinVRAMGB:        8,
+				RecommendedQuant: "4bit-nf4",
+			},
+			{
+				Name:             "Qwen2.5-Coder-3B",
+				ParamsBillions:   3,
+				Family:           "Qwen",
+				RepoID:           "Qwen/Qwen2.5-Coder-3B",
+				MinVRAMGB:        6,
+				RecommendedQuant: "4bit-nf4",
+			},
+			{
+				Name:             "Qwen2.5-Coder-7B",
+				ParamsBillions:   7,
+				Family:           "Qwen",
+				RepoID:           "Qwen/Qwen2.5-Coder-7B",
+				MinVRAMGB:        10,
+				RecommendedQuant: "4bit-nf4",
+			},
 		},
 	}
+}
+
+// ListBaseModels returns the curated catalog of available base models
+// the user can choose from for fine-tuning.
+func (s *ModelSelector) ListBaseModels() []domain.BaseModel {
+	return s.Catalog
 }
 
 // SelectBaseModel picks the smallest model likely to work for the task,

@@ -77,6 +77,20 @@ type TrainingParameters struct {
 	PreserveSyntax     bool    `json:"preserve_syntax"`
 	ContextWindow      int     `json:"context_window"`
 	BalancedSampling   bool    `json:"balanced_sampling"`
+	// UseLoRA enables PEFT LoRA adapters (true for local QLoRA training).
+	UseLoRA bool `json:"use_lora"`
+	// LoRARank is the LoRA adapter rank (default 16).
+	LoRARank int `json:"lora_rank"`
+	// LoRAAlpha is the LoRA scaling alpha (default 32).
+	LoRAAlpha int `json:"lora_alpha"`
+	// LoRADropout is the LoRA dropout probability (default 0.05).
+	LoRADropout float64 `json:"lora_dropout"`
+	// LoRATargetMods lists the module names to apply LoRA to.
+	LoRATargetMods []string `json:"lora_target_mods,omitempty"`
+	// Load4Bit enables 4-bit NF4 quantization (QLoRA).
+	Load4Bit bool `json:"load_4bit"`
+	// GradCheckpoint enables gradient checkpointing to trade compute for VRAM.
+	GradCheckpoint bool `json:"grad_checkpoint"`
 }
 
 // ValidationParameters configure how a fine-tune run is evaluated.

@@ -32,11 +32,12 @@ func NewTrainingUsecase(
 	}
 }
 
-// StartTraining validates the dataset is ready, auto-selects a base model,
-// creates a queued/running TrainingJob, and kicks off the (simulated)
-// LoRA/QLoRA fine-tune asynchronously. It returns immediately with the job;
-// callers poll GetJob for progress.
-func (u *TrainingUsecase) StartTraining(taskID string) (*domain.TrainingJob, error) {
+// StartTraining validates the dataset is ready, selects a base model —
+// either the one the user explicitly chose (by name) or the auto-recommended
+// default — creates a queued/running TrainingJob, and kicks off the
+// (simulated) LoRA/QLoRA fine-tune asynchronously. It returns immediately
+// with the job; callers poll GetJob for progress.
+func (u *TrainingUsecase) StartTraining(taskID string, baseModelID ...string) (*domain.TrainingJob, error) {
 	task, err := u.tasks.Get(taskID)
 	if err != nil {
 		return nil, err
@@ -87,6 +88,14 @@ func (u *TrainingUsecase) StartTraining(taskID string) (*domain.TrainingJob, err
 
 	base := u.selector.SelectBaseModel(task, len(usable), avgIn, avgOut)
 
+	// Prefer the user's explicit model choice over the auto-recommendation.
+	if len(baseModelID) > 0 && baseModelID[0] != "" {
+		chosen := findBaseModel(u.selector.ListBaseModels(), baseModelID[0])
+		if chosen != nil {
+			base = *chosen
+		}
+	}
+
 	now := time.Now().UTC()
 
 	job := &domain.TrainingJob{
@@ -128,6 +137,22 @@ func (u *TrainingUsecase) StartTraining(taskID string) (*domain.TrainingJob, err
 	)
 
 	return job, nil
+}
+
+// ListBaseModels returns the curated catalog of base models available for
+// fine-tuning so the user can pick one explicitly.
+func (u *TrainingUsecase) ListBaseModels() []domain.BaseModel {
+	return u.selector.ListBaseModels()
+}
+
+// findBaseModel looks up a model in the catalog by its name (case-insensitive).
+func findBaseModel(catalog []domain.BaseModel, name string) *domain.BaseModel {
+	for i := range catalog {
+		if catalog[i].Name == name || catalog[i].RepoID == name {
+			return &catalog[i]
+		}
+	}
+	return nil
 }
 
 func (u *TrainingUsecase) GetJob(id string) (*domain.TrainingJob, error) {

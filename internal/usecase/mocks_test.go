@@ -392,7 +392,15 @@ func (m *mockExporter) BuildExport(
 // --- Mock ModelSelector ---.
 
 type mockModelSelector struct {
-	model domain.BaseModel
+	model   domain.BaseModel
+	catalog []domain.BaseModel
+}
+
+func (m *mockModelSelector) ListBaseModels() []domain.BaseModel {
+	if m.catalog != nil {
+		return m.catalog
+	}
+	return []domain.BaseModel{m.model}
 }
 
 func (m *mockModelSelector) SelectBaseModel(

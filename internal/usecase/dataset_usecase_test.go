@@ -222,7 +222,7 @@ func TestDatasetUsecase_ImportCSV_TaskNotFound(t *testing.T) {
 func TestDatasetUsecase_ImportJSONL_Alpaca_AutoDetect(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration, Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	examples := &mockExampleRepo{}
 	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
 
@@ -254,7 +254,7 @@ func TestDatasetUsecase_ImportJSONL_Alpaca_AutoDetect(t *testing.T) {
 func TestDatasetUsecase_ImportJSONL_Alpaca_WithInput(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration, Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	examples := &mockExampleRepo{}
 	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
 
@@ -279,7 +279,7 @@ func TestDatasetUsecase_ImportJSONL_Alpaca_WithInput(t *testing.T) {
 func TestDatasetUsecase_ImportJSONL_Alpaca_SkipsEmptyOutput(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration, Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	examples := &mockExampleRepo{}
 	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
 
@@ -300,7 +300,7 @@ func TestDatasetUsecase_ImportJSONL_Alpaca_SkipsEmptyOutput(t *testing.T) {
 func TestDatasetUsecase_ImportJSONL_Chat_AutoDetect(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration, Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	examples := &mockExampleRepo{}
 	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
 
@@ -333,7 +333,7 @@ func TestDatasetUsecase_ImportJSONL_Chat_AutoDetect(t *testing.T) {
 func TestDatasetUsecase_ImportJSONL_Chat_LastAssistantWins(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration, Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	examples := &mockExampleRepo{}
 	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
 
@@ -362,7 +362,7 @@ func TestDatasetUsecase_ImportJSONL_Chat_LastAssistantWins(t *testing.T) {
 func TestDatasetUsecase_ImportJSONL_ForcedAlpacaOnChat(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration, Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	examples := &mockExampleRepo{}
 	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
 
@@ -378,7 +378,7 @@ func TestDatasetUsecase_ImportJSONL_ForcedAlpacaOnChat(t *testing.T) {
 func TestDatasetUsecase_ImportJSONL_Empty(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration, Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	uc := newDatasetUsecase(tasks, &mockExampleRepo{}, &mockSynthGen{})
 
 	_, err := uc.ImportJSONL("task_1", "", "")
@@ -390,7 +390,7 @@ func TestDatasetUsecase_ImportJSONL_Empty(t *testing.T) {
 func TestDatasetUsecase_ImportJSONL_BlankLinesOnly(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration, Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	uc := newDatasetUsecase(tasks, &mockExampleRepo{}, &mockSynthGen{})
 
 	_, err := uc.ImportJSONL("task_1", "\n\n  \n", "")
@@ -402,7 +402,7 @@ func TestDatasetUsecase_ImportJSONL_BlankLinesOnly(t *testing.T) {
 func TestDatasetUsecase_ImportJSONL_MalformedJSON(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration, Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	uc := newDatasetUsecase(tasks, &mockExampleRepo{}, &mockSynthGen{})
 
 	_, err := uc.ImportJSONL("task_1", "not a json line", "")
@@ -414,7 +414,7 @@ func TestDatasetUsecase_ImportJSONL_MalformedJSON(t *testing.T) {
 func TestDatasetUsecase_ImportJSONL_UnknownFieldsIgnored(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration}}
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Type: domain.TaskGeneration, Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 	examples := &mockExampleRepo{}
 	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
 

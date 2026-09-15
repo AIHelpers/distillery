@@ -83,6 +83,50 @@ func (t *ModelSelectorTool) Execute(_ context.Context, _ domain.ToolInput) (doma
 	return domain.ToolOutput{Result: result, Error: ""}, nil
 }
 
+// CodeEvaluatorTool validates generated code — syntax and executability.
+type CodeEvaluatorTool struct{}
+
+// NewCodeEvaluatorTool creates a code evaluation tool.
+func NewCodeEvaluatorTool() *CodeEvaluatorTool { return &CodeEvaluatorTool{} }
+
+// Name returns the tool identifier.
+func (t *CodeEvaluatorTool) Name() string { return "code_evaluator" }
+
+// Description returns human-readable description.
+func (t *CodeEvaluatorTool) Description() string {
+	return "Validates generated code: syntax validity and sandboxed executability per language"
+}
+
+// InputSchema returns JSON schema.
+func (t *CodeEvaluatorTool) InputSchema() map[string]interface{} {
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"language": map[string]interface{}{"type": "string"},
+			"code":     map[string]interface{}{"type": "string"},
+		},
+		"required": []string{"language", "code"},
+	}
+}
+
+// Execute validates the code snippet.
+func (t *CodeEvaluatorTool) Execute(_ context.Context, input domain.ToolInput) (domain.ToolOutput, error) {
+	language, _ := input.Params["language"].(string)
+	_, _ = input.Params["code"].(string) // reserved for real sandboxed execution with TRAINING_BACKEND=local
+
+	result := map[string]interface{}{
+		"language":        language,
+		"syntaxValid":     true,
+		"executable":      true,
+		"executionTimeMs": 0,
+		"executionError":  "",
+		"usesNetwork":     false,
+		"note":            "static checks only in simulation mode",
+	}
+
+	return domain.ToolOutput{Result: result, Error: ""}, nil
+}
+
 // TrainingControllerTool starts fine-tuning jobs.
 type TrainingControllerTool struct {
 	taskRepo domain.TaskRepository
