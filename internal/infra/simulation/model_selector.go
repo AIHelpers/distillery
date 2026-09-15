@@ -2,6 +2,8 @@ package simulation
 
 import "distillery/internal/domain"
 
+const quant4BitNF4 = "4bit-nf4"
+
 // ModelSelector implements domain.ModelSelector by right-sizing a base
 // model from the curated catalog to the task's dataset complexity, mirroring
 // the "automatic base-model selection" differentiator from the product spec.
@@ -18,7 +20,7 @@ func NewModelSelector() *ModelSelector {
 				Family:           "Qwen",
 				RepoID:           "Qwen/Qwen2.5-0.5B-Instruct",
 				MinVRAMGB:        2,
-				RecommendedQuant: "4bit-nf4",
+				RecommendedQuant: quant4BitNF4,
 			},
 			{
 				Name:             "Qwen2.5-1.5B-Instruct",
@@ -26,7 +28,7 @@ func NewModelSelector() *ModelSelector {
 				Family:           "Qwen",
 				RepoID:           "Qwen/Qwen2.5-1.5B-Instruct",
 				MinVRAMGB:        4,
-				RecommendedQuant: "4bit-nf4",
+				RecommendedQuant: quant4BitNF4,
 			},
 			{
 				Name:             "Llama-3.2-1B-Instruct",
@@ -34,7 +36,7 @@ func NewModelSelector() *ModelSelector {
 				Family:           "Llama",
 				RepoID:           "meta-llama/Llama-3.2-1B-Instruct",
 				MinVRAMGB:        2,
-				RecommendedQuant: "4bit-nf4",
+				RecommendedQuant: quant4BitNF4,
 			},
 			{
 				Name:             "Llama-3.2-3B-Instruct",
@@ -42,7 +44,7 @@ func NewModelSelector() *ModelSelector {
 				Family:           "Llama",
 				RepoID:           "meta-llama/Llama-3.2-3B-Instruct",
 				MinVRAMGB:        6,
-				RecommendedQuant: "4bit-nf4",
+				RecommendedQuant: quant4BitNF4,
 			},
 			{
 				Name:             "Phi-3.5-mini-instruct",
@@ -50,7 +52,7 @@ func NewModelSelector() *ModelSelector {
 				Family:           "Phi",
 				RepoID:           "microsoft/Phi-3.5-mini-instruct",
 				MinVRAMGB:        8,
-				RecommendedQuant: "4bit-nf4",
+				RecommendedQuant: quant4BitNF4,
 			},
 			{
 				Name:             "Qwen2.5-Coder-3B",
@@ -58,7 +60,7 @@ func NewModelSelector() *ModelSelector {
 				Family:           "Qwen",
 				RepoID:           "Qwen/Qwen2.5-Coder-3B",
 				MinVRAMGB:        6,
-				RecommendedQuant: "4bit-nf4",
+				RecommendedQuant: quant4BitNF4,
 			},
 			{
 				Name:             "Qwen2.5-Coder-7B",
@@ -66,7 +68,7 @@ func NewModelSelector() *ModelSelector {
 				Family:           "Qwen",
 				RepoID:           "Qwen/Qwen2.5-Coder-7B",
 				MinVRAMGB:        10,
-				RecommendedQuant: "4bit-nf4",
+				RecommendedQuant: quant4BitNF4,
 			},
 		},
 	}

@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"testing"
+	time "time"
 
 	"distillery/internal/domain"
 	"distillery/internal/usecase"
-	time "time"
 )
 
 func newFinetuneUsecase(

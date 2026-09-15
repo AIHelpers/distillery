@@ -46,7 +46,7 @@ func zeroval(fullType string) string {
 	case "domain.ExampleSource", "domain.TaskType", "domain.TrainingStatus",
 		"domain.DeploymentStatus", "domain.ProgrammingLanguage", "domain.SkillCategory",
 		"domain.RequestStatus", "domain.JobStatus", "domain.OptimizationAction",
-		"domain.MetricType":
+		"domain.MetricType", "domain.ModelStoreType", "domain.ModelStoreKind":
 		return "nil" // these are string-typed consts; "" handled below.
 	case "[2]int":
 		return "[2]int{}"
@@ -69,7 +69,7 @@ func zeroValue(fullType string, fset *token.FileSet, f *ast.File, pkgName string
 	case "domain.ExampleSource", "domain.TaskType", "domain.TrainingStatus",
 		"domain.DeploymentStatus", "domain.ProgrammingLanguage", "domain.SkillCategory",
 		"domain.RequestStatus", "domain.JobStatus", "domain.OptimizationAction",
-		"domain.MetricType":
+		"domain.MetricType", "domain.ModelStoreType", "domain.ModelStoreKind":
 		return &ast.BasicLit{Kind: token.STRING, Value: `""`}
 	}
 
@@ -438,6 +438,26 @@ var FIELDS = map[string][]fieldDef{
 	},
 	"domain.BaseModel": {
 		{"Name", "string"}, {"ParamsBillions", "float64"}, {"Family", "string"},
+	},
+	"domain.ModelStoreConfig": {
+		{"Path", "string"},
+		{"RepoID", "string"},
+		{"Token", "string"},
+		{"CacheDir", "string"},
+		{"Endpoint", "string"},
+		{"Bucket", "string"},
+		{"Region", "string"},
+		{"AccessKey", "string"},
+		{"SecretKey", "string"},
+	},
+	"domain.ModelStore": {
+		{"ID", "string"},
+		{"Name", "string"},
+		{"Type", "domain.ModelStoreType"},
+		{"Kind", "domain.ModelStoreKind"},
+		{"Config", "domain.ModelStoreConfig"},
+		{"Enabled", "bool"},
+		{"CreatedAt", "time.Time"},
 	},
 	"domain.TrainingMetrics": {
 		{"FinalLoss", "float64"}, {"EvalAccuracy", "float64"}, {"Epochs", "int"}, {"TrainExamples", "int"},

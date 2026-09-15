@@ -110,7 +110,7 @@ or Kubernetes — not just on this platform's hosted inference.
 		return nil, "", err
 	}
 
-	filename = fmt.Sprintf("%s-v%d-export.zip", safeName(task.Name), job.Version)
+	filename = fmt.Sprintf("%s-v%d-export.zip", SafeName(task.Name), job.Version)
 
 	return buf.Bytes(), filename, nil
 }
@@ -123,7 +123,8 @@ func safeAcc(job *domain.TrainingJob) float64 {
 	return job.Metrics.EvalAccuracy
 }
 
-func safeName(s string) string {
+// SafeName converts a human label into a filesystem-safe slug.
+func SafeName(s string) string {
 	out := make([]rune, 0, len(s))
 	for _, r := range s {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {

@@ -13,8 +13,8 @@ import (
 type JSONLFormat string
 
 const (
-	JSONLAlpaca JSONLFormat = "alpaca" // {"instruction","input","output",...}
-	JSONLChat   JSONLFormat = "chat"   // {"messages":[{"role","content"},...],...}
+	JSONLAlpaca JSONLFormat = "alpaca" // {"instruction","input","output",...}.
+	JSONLChat   JSONLFormat = "chat"   // {"messages":[{"role","content"},...],...}.
 )
 
 // ImportJSONL parses Alpaca-style or chat-style JSONL content and loads each
@@ -95,7 +95,8 @@ func parseJSONL(content, formatHint string) ([]ExamplePair, error) {
 		}
 	}
 
-	if err := scanner.Err(); err != nil {
+	err := scanner.Err()
+	if err != nil {
 		return nil, domain.ErrInvalidInput
 	}
 
@@ -106,7 +107,9 @@ func parseJSONL(content, formatHint string) ([]ExamplePair, error) {
 // Alpaca record (has "instruction") or a chat record (has "messages").
 func detectJSONLFormat(line string) string {
 	var raw map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(line), &raw); err != nil {
+
+	err := json.Unmarshal([]byte(line), &raw)
+	if err != nil {
 		return ""
 	}
 
@@ -130,7 +133,8 @@ func parseAlpacaLine(line string) (ExamplePair, bool) {
 		Output      string `json:"output"`
 	}
 
-	if err := json.Unmarshal([]byte(line), &rec); err != nil {
+	err := json.Unmarshal([]byte(line), &rec)
+	if err != nil {
 		return ExamplePair{}, false
 	}
 
@@ -147,6 +151,7 @@ func parseAlpacaLine(line string) (ExamplePair, bool) {
 		if fullInput != "" {
 			fullInput += "\n\n"
 		}
+
 		fullInput += extraInput
 	}
 
@@ -172,7 +177,8 @@ func parseChatLine(line string) (ExamplePair, bool) {
 		Messages []chatMessage `json:"messages"`
 	}
 
-	if err := json.Unmarshal([]byte(line), &rec); err != nil {
+	err := json.Unmarshal([]byte(line), &rec)
+	if err != nil {
 		return ExamplePair{}, false
 	}
 
@@ -181,6 +187,7 @@ func parseChatLine(line string) (ExamplePair, bool) {
 	}
 
 	var promptParts []string
+
 	output := ""
 
 	for _, msg := range rec.Messages {

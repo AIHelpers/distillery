@@ -152,6 +152,7 @@ func findBaseModel(catalog []domain.BaseModel, name string) *domain.BaseModel {
 			return &catalog[i]
 		}
 	}
+
 	return nil
 }
 

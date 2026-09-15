@@ -8,7 +8,7 @@ import (
 	"io/fs"
 )
 
-//go:embed index.html agent.html static/*
+//go:embed *.html static/*
 var files embed.FS
 
 // FS returns the embedded web UI filesystem rooted at the web directory.

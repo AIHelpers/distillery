@@ -112,7 +112,7 @@ func (t *CodeEvaluatorTool) InputSchema() map[string]interface{} {
 // Execute validates the code snippet.
 func (t *CodeEvaluatorTool) Execute(_ context.Context, input domain.ToolInput) (domain.ToolOutput, error) {
 	language, _ := input.Params["language"].(string)
-	_, _ = input.Params["code"].(string) // reserved for real sandboxed execution with TRAINING_BACKEND=local
+	_, _ = input.Params["code"].(string) // reserved for real sandboxed execution with TRAINING_BACKEND=local.
 
 	result := map[string]interface{}{
 		"language":        language,

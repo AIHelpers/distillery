@@ -3,10 +3,10 @@ package usecase_test
 import (
 	"errors"
 	"testing"
+	time "time"
 
 	"distillery/internal/domain"
 	"distillery/internal/usecase"
-	time "time"
 )
 
 func newDeploymentUsecase(
@@ -262,47 +262,58 @@ func TestDeploymentUsecase_DeployVersion_JobNotFound(t *testing.T) {
 	}
 }
 
-func TestDeploymentUsecase_DeployVersion_TaskMismatch(t *testing.T) {
+func TestDeploymentUsecase_DeployVersion_NoModelReasons(t *testing.T) {
 	t.Parallel()
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
-	jobs := &mockTrainingRepo{
-		job: &domain.TrainingJob{ID: "job_1", TaskID: "other_task", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
+	tests := []struct {
+		name    string
+		job     *domain.TrainingJob
+		wantMsg string
+	}{
+		{
+			name: "task mismatch",
+			job: &domain.TrainingJob{
+				ID:        "job_1",
+				TaskID:    "other_task",
+				Status:    domain.TrainingCompleted,
+				BaseModel: domain.BaseModel{Name: "M"},
+			},
+			wantMsg: "task mismatch",
+		},
+		{
+			name: "not completed",
+			job: &domain.TrainingJob{
+				ID:        "job_1",
+				TaskID:    "task_1",
+				Status:    domain.TrainingRunning,
+				BaseModel: domain.BaseModel{Name: "M"},
+			},
+			wantMsg: "non-completed job",
+		},
 	}
-	uc := newDeploymentUsecase(
-		tasks,
-		jobs,
-		&mockExampleRepo{},
-		&mockDeploymentRepo{},
-		&mockInferenceEngine{},
-		&mockExporter{},
-	)
 
-	_, _, err := uc.DeployVersion("task_1", "job_1", false)
-	if !errors.Is(err, domain.ErrNoModel) {
-		t.Errorf("expected ErrNoModel for task mismatch, got %v", err)
-	}
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-func TestDeploymentUsecase_DeployVersion_NotCompleted(t *testing.T) {
-	t.Parallel()
+			tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+			jobs := &mockTrainingRepo{job: tt.job}
+			uc := newDeploymentUsecase(
+				tasks,
+				jobs,
+				&mockExampleRepo{},
+				&mockDeploymentRepo{},
+				&mockInferenceEngine{},
+				&mockExporter{},
+			)
 
-	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
-	jobs := &mockTrainingRepo{
-		job: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingRunning, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
-	}
-	uc := newDeploymentUsecase(
-		tasks,
-		jobs,
-		&mockExampleRepo{},
-		&mockDeploymentRepo{},
-		&mockInferenceEngine{},
-		&mockExporter{},
-	)
+			_, _, err := uc.DeployVersion("task_1", "job_1", false)
+			if !errors.Is(err, domain.ErrNoModel) {
+				t.Errorf("expected ErrNoModel for %s, got %v", tt.name, err)
+			}
 
-	_, _, err := uc.DeployVersion("task_1", "job_1", false)
-	if !errors.Is(err, domain.ErrNoModel) {
-		t.Errorf("expected ErrNoModel for non-completed job, got %v", err)
+			_ = tt.wantMsg
+		})
 	}
 }
 

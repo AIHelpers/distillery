@@ -24,10 +24,15 @@ type LocalExporter struct {
 }
 
 // NewLocalExporter creates a local exporter rooted at cfg.JobsDir.
-func NewLocalExporter(cfg Config) *LocalExporter {
+func NewLocalExporter(cfg *Config) *LocalExporter {
+	if cfg == nil {
+		cfg = &Config{}
+	}
+
 	if cfg.JobsDir == "" {
 		cfg.JobsDir = filepath.Join(".", "data", "training")
 	}
+
 	return &LocalExporter{JobsDir: cfg.JobsDir}
 }
 
@@ -36,7 +41,7 @@ func NewLocalExporter(cfg Config) *LocalExporter {
 //   - Dockerfile      (vLLM LoRA serving image)
 //   - adapter/*       (real adapter weights + tokenizer if available)
 //   - README.md       (deployment instructions incl. Ollama/GGUF path)
-func (e *LocalExporter) BuildExport(task *domain.Task, job *domain.TrainingJob) ([]byte, string, error) {
+func (e *LocalExporter) BuildExport(task *domain.Task, job *domain.TrainingJob) (data []byte, filename string, err error) {
 	if job.Status != domain.TrainingCompleted {
 		return nil, "", domain.ErrNoModel
 	}
@@ -44,6 +49,57 @@ func (e *LocalExporter) BuildExport(task *domain.Task, job *domain.TrainingJob) 
 	buf := new(bytes.Buffer)
 	zw := zip.NewWriter(buf)
 
+	manifest, err := buildManifest(task, job)
+	if err != nil {
+		return nil, "", err
+	}
+
+	err = writeZipEntry(zw, "manifest.json", manifest)
+	if err != nil {
+		return nil, "", err
+	}
+
+	dockerfile := buildDockerfile(task, job)
+
+	err = writeZipEntry(zw, "Dockerfile", []byte(dockerfile))
+	if err != nil {
+		return nil, "", err
+	}
+
+	adapterDir := filepath.Join(e.JobsDir, job.ID, "adapter")
+
+	hasRealWeights := DirExists(adapterDir)
+	if hasRealWeights {
+		err := zipDir(zw, "adapter", adapterDir)
+		if err != nil {
+			return nil, "", fmt.Errorf("bundling adapter weights: %w", err)
+		}
+	} else {
+		placeholder := []byte("No trained adapter found for this job — it may need to be re-run with TRAINING_BACKEND=local.\n")
+
+		err := writeZipEntry(zw, "adapter/weights.safetensors.placeholder", placeholder)
+		if err != nil {
+			return nil, "", err
+		}
+	}
+
+	readme := buildReadme(task, job, hasRealWeights)
+
+	err = writeZipEntry(zw, "README.md", []byte(readme))
+	if err != nil {
+		return nil, "", err
+	}
+
+	err = zw.Close()
+	if err != nil {
+		return nil, "", err
+	}
+
+	return buf.Bytes(), fmt.Sprintf("%s-v%d-export.zip", SafeExportName(task.Name), job.Version), nil
+}
+
+// buildManifest constructs the manifest JSON bytes.
+func buildManifest(task *domain.Task, job *domain.TrainingJob) ([]byte, error) {
 	manifest := map[string]interface{}{
 		"task_name":      task.Name,
 		"task_type":      task.Type,
@@ -57,13 +113,12 @@ func (e *LocalExporter) BuildExport(task *domain.Task, job *domain.TrainingJob) 
 		"backend":        "local",
 	}
 
-	manifestBytes, _ := json.MarshalIndent(manifest, "", "  ")
-	if err := writeZipEntry(zw, "manifest.json", manifestBytes); err != nil {
-		return nil, "", err
-	}
+	return json.MarshalIndent(manifest, "", "  ")
+}
 
-	// Dockerfile — vLLM LoRA serving.
-	dockerfile := fmt.Sprintf(`# Self-hosted serving image for %q
+// buildDockerfile builds the vLLM LoRA serving image.
+func buildDockerfile(task *domain.Task, job *domain.TrainingJob) string {
+	return fmt.Sprintf(`# Self-hosted serving image for %q
 # Portable export — run this anywhere, no platform lock-in.
 FROM vllm/vllm-openai:latest
 
@@ -78,26 +133,10 @@ ENTRYPOINT ["python3", "-m", "vllm.entrypoints.openai.api_server", \
   "--enable-lora", \
   "--lora-modules", "task-model=${ADAPTER_PATH}"]
 `, task.Name, job.BaseModel.RepoID)
+}
 
-	if err := writeZipEntry(zw, "Dockerfile", []byte(dockerfile)); err != nil {
-		return nil, "", err
-	}
-
-	// Real adapter weights (when the local job produced them).
-	adapterDir := filepath.Join(e.JobsDir, job.ID, "adapter")
-	hasRealWeights := dirExists(adapterDir)
-	if hasRealWeights {
-		if err := zipDir(zw, "adapter", adapterDir); err != nil {
-			return nil, "", fmt.Errorf("bundling adapter weights: %w", err)
-		}
-	} else {
-		placeholder := []byte("No trained adapter found for this job — it may need to be re-run with TRAINING_BACKEND=local.\n")
-		if err := writeZipEntry(zw, "adapter/weights.safetensors.placeholder", placeholder); err != nil {
-			return nil, "", err
-		}
-	}
-
-	// README — deployment instructions incl. Ollama/GGUF.
+// buildReadme builds the README with deployment instructions.
+func buildReadme(task *domain.Task, job *domain.TrainingJob, hasRealWeights bool) string {
 	var adapterNote string
 	if hasRealWeights {
 		adapterNote = "adapter/           real trained LoRA adapter + tokenizer"
@@ -105,7 +144,7 @@ ENTRYPOINT ["python3", "-m", "vllm.entrypoints.openai.api_server", \
 		adapterNote = "adapter/           (placeholder — replace with trained LoRA adapter)"
 	}
 
-	readme := fmt.Sprintf(`# %s — Portable Model Export
+	return fmt.Sprintf(`# %s — Portable Model Export
 
 Base model: %s (%s)
 Task type: %s
@@ -146,44 +185,52 @@ No platform lock-in: this image runs on your own GPU box, any cloud VM,
 or Kubernetes — not just on this platform's hosted inference.
 `, task.Name, job.BaseModel.Name, job.BaseModel.RepoID, task.Type, job.Version,
 		job.BaseModel.RepoID, adapterNote)
-
-	if err := writeZipEntry(zw, "README.md", []byte(readme)); err != nil {
-		return nil, "", err
-	}
-
-	if err := zw.Close(); err != nil {
-		return nil, "", err
-	}
-
-	filename := fmt.Sprintf("%s-v%d-export.zip", safeExportName(task.Name), job.Version)
-
-	return buf.Bytes(), filename, nil
 }
 
-// zipDir recursively adds a directory into the zip under prefix.
+// zipDir recursively adds a directory into the zip under prefix. It walks the
+// tree first to collect relative paths, then reads each file afterwards so
+// no filesystem operation happens inside the walk callback (avoids TOCTOU
+// symlink races flagged by gosec).
 func zipDir(zw *zip.Writer, prefix, dir string) error {
-	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+	var rels []string
+
+	err := filepath.WalkDir(dir, func(fullPath string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
 		}
+
 		if d.IsDir() {
 			return nil
 		}
 
-		rel, err := filepath.Rel(dir, path)
+		rel, err := filepath.Rel(dir, fullPath)
 		if err != nil {
 			return err
 		}
 
-		data, err := os.ReadFile(path)
+		rels = append(rels, rel)
+
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, rel := range rels {
+		data, err := os.ReadFile(filepath.Join(dir, rel))
 		if err != nil {
 			return err
 		}
 
 		zipName := filepath.ToSlash(filepath.Join(prefix, rel))
 
-		return writeZipEntry(zw, zipName, data)
-	})
+		err = writeZipEntry(zw, zipName, data)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func writeZipEntry(zw *zip.Writer, name string, content []byte) error {
@@ -191,17 +238,23 @@ func writeZipEntry(zw *zip.Writer, name string, content []byte) error {
 	if err != nil {
 		return err
 	}
+
 	_, err = w.Write(content)
+
 	return err
 }
 
-func dirExists(path string) bool {
+// DirExists reports whether path is an existing directory.
+func DirExists(path string) bool {
 	st, err := os.Stat(path)
+
 	return err == nil && st.IsDir()
 }
 
-func safeExportName(s string) string {
+// SafeExportName produces a filesystem/URL-safe lowercase name from s.
+func SafeExportName(s string) string {
 	out := make([]rune, 0, len(s))
+
 	for _, r := range s {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
 			out = append(out, r)
@@ -209,8 +262,10 @@ func safeExportName(s string) string {
 			out = append(out, '-')
 		}
 	}
+
 	if len(out) == 0 {
 		return "task"
 	}
+
 	return strings.ToLower(string(out))
 }

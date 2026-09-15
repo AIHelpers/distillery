@@ -246,6 +246,7 @@ func TestDatasetUsecase_ImportJSONL_Alpaca_AutoDetect(t *testing.T) {
 	if examples.addBatch[0].Input != "Write a function that adds two numbers" {
 		t.Errorf("unexpected input: %q", examples.addBatch[0].Input)
 	}
+
 	if examples.addBatch[0].Output != "func add(a, b int) int { return a + b }" {
 		t.Errorf("unexpected output: %q", examples.addBatch[0].Output)
 	}

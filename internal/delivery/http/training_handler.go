@@ -22,7 +22,7 @@ type startTrainingRequest struct {
 }
 
 // Start POST /api/v1/tasks/{taskID}/training
-// Body (optional): {"base_model": "Llama-3.2-1B-Instruct"}
+// Body (optional): {"base_model": "Llama-3.2-1B-Instruct"}.
 func (h *TrainingHandler) Start(w http.ResponseWriter, r *http.Request, taskID string) {
 	var req startTrainingRequest
 	if r.Body != nil {
@@ -45,6 +45,7 @@ func (h *TrainingHandler) Models(w http.ResponseWriter, _ *http.Request) {
 	if models == nil {
 		models = []domain.BaseModel{}
 	}
+
 	writeJSON(w, http.StatusOK, models)
 }
 

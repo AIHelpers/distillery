@@ -22,7 +22,7 @@ run:
   # Resolve paths relative to go.mod (the module root).
   relative-path-mode: gomod
   # Go version from go.mod — used for language-version-aware linters.
-  go: "1.22"
+  go: "1.26.5"
   # Also lint test files.
   tests: true
   # Allow golangci-lint to pick up build info from VCS automatically.
@@ -112,7 +112,7 @@ linters:
     gofumpt:
       # The project deliberately sorts stdlib, third-party, and internal imports
       # by hand; gofumpt's extra sorting rules are not used here.
-      lang-version: "1.22"
+      lang-version: "1.26.5"
       module-path: "distillery"
       extra-rules: false
     goconst:
@@ -196,7 +196,7 @@ linters:
     gomodguard:
       allowed:
         golang-versions:
-          - ">= 1.22.0"
+          - ">= 1.26.5"
   # -----------------------------------------------------------------------
   # Per-linter / per-path exclusions tuned to the patterns seen in this code.
   # -----------------------------------------------------------------------
@@ -309,6 +309,21 @@ linters:
         linters:
           - errchkjson
         text: "unsafe type `interface{}` found"
+      # copyTree re-validates every destination against the store root with a
+      # filepath.Rel guard before writing, so no path can escape the store;
+      # gosec's SSA taint analysis cannot model the guard and flags G703.
+      - path: .*infra[\\/]modelstore[\\/]transfer\.go$
+        linters:
+          - gosec
+        text: "G703"
+      # runJob validates job.ID with isSafeJobID (no separators, no "..",
+      # alphanumerics + - _ only) before it reaches any subprocess argument;
+      # gosec's SSA taint analysis cannot model the custom validator and
+      # flags G204 on the python worker command.
+      - path: .*infra[\\/]training[\\/]local_trainer\.go$
+        linters:
+          - gosec
+        text: "G204"
       # Factory functions returning domain interfaces are the idiomatic
       # composition-root pattern for this project: the caller depends on
       # the interface, not the concrete type.
@@ -334,7 +349,7 @@ formatters:
         - prefix(distillery)
     gofumpt:
       extra-rules: false
-      lang-version: "1.22"
+      lang-version: "1.26.5"
       module-path: "distillery"
   exclusions:
     generated: strict

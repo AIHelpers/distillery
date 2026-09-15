@@ -52,7 +52,7 @@ func (e *InferenceEngine) Predict(
 		confidence = 0.99
 	}
 
-	return best.Output, round2(confidence)
+	return best.Output, Round2(confidence)
 }
 
 func tokenize(s string) map[string]bool {

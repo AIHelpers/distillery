@@ -16,6 +16,7 @@ type Handlers struct {
 	Feedback   *FeedbackHandler
 	Agent      *AgentHandler
 	FineTune   *FineTuneHandler
+	ModelStore *ModelStoreHandler
 }
 
 // NewRouter builds the full HTTP handler: the JSON API under /api/v1 plus
@@ -23,7 +24,25 @@ type Handlers struct {
 func NewRouter(h Handlers, webFS fs.FS) http.Handler {
 	mux := http.NewServeMux()
 
-	// --- Tasks ---.
+	registerTaskRoutes(mux, h)
+	registerDeploymentRoutes(mux, h)
+	registerModelStoreRoutes(mux, h)
+	registerFeedbackRoutes(mux, h)
+	registerAgentRoutes(mux, h)
+	registerFineTuneRoutes(mux, h.FineTune)
+
+	// --- Health check (useful for container orchestrators) ---.
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+
+	// --- Static web UI ---.
+	mux.Handle("/", http.FileServer(http.FS(webFS)))
+
+	return withLogging(mux)
+}
+
+func registerTaskRoutes(mux *http.ServeMux, h Handlers) {
 	mux.HandleFunc("POST /api/v1/tasks", h.Task.Create)
 	mux.HandleFunc("GET /api/v1/tasks", h.Task.List)
 	mux.HandleFunc("GET /api/v1/tasks/{taskID}", func(w http.ResponseWriter, r *http.Request) {
@@ -71,8 +90,9 @@ func NewRouter(h Handlers, webFS fs.FS) http.Handler {
 	})
 	// List the base-model catalog the user can pick from for fine-tuning.
 	mux.HandleFunc("GET /api/v1/models", h.Training.Models)
+}
 
-	// --- Deployment / inference / export ---.
+func registerDeploymentRoutes(mux *http.ServeMux, h Handlers) {
 	mux.HandleFunc("POST /api/v1/tasks/{taskID}/deploy", func(w http.ResponseWriter, r *http.Request) {
 		h.Deployment.Deploy(w, r, r.PathValue("taskID"))
 	})
@@ -97,8 +117,46 @@ func NewRouter(h Handlers, webFS fs.FS) http.Handler {
 	mux.HandleFunc("GET /api/v1/tasks/{taskID}/export", func(w http.ResponseWriter, r *http.Request) {
 		h.Deployment.Export(w, r, r.PathValue("taskID"))
 	})
+}
 
-	// --- Feedback / continuous improvement ---.
+func registerModelStoreRoutes(mux *http.ServeMux, h Handlers) {
+	if h.ModelStore == nil {
+		return
+	}
+
+	mux.HandleFunc("POST /api/v1/model-stores", h.ModelStore.CreateStore)
+	mux.HandleFunc("GET /api/v1/model-stores", h.ModelStore.ListStores)
+	mux.HandleFunc("GET /api/v1/model-stores/{storeID}", func(w http.ResponseWriter, r *http.Request) {
+		h.ModelStore.GetStore(w, r, r.PathValue("storeID"))
+	})
+	mux.HandleFunc("PATCH /api/v1/model-stores/{storeID}", func(w http.ResponseWriter, r *http.Request) {
+		h.ModelStore.UpdateStore(w, r, r.PathValue("storeID"))
+	})
+	mux.HandleFunc("DELETE /api/v1/model-stores/{storeID}", func(w http.ResponseWriter, r *http.Request) {
+		h.ModelStore.DeleteStore(w, r, r.PathValue("storeID"))
+	})
+
+	// Base models.
+	mux.HandleFunc("GET /api/v1/model-stores/{storeID}/models", func(w http.ResponseWriter, r *http.Request) {
+		h.ModelStore.ListModels(w, r, r.PathValue("storeID"))
+	})
+	mux.HandleFunc("POST /api/v1/model-stores/{storeID}/models/download", func(w http.ResponseWriter, r *http.Request) {
+		h.ModelStore.DownloadModel(w, r, r.PathValue("storeID"))
+	})
+	mux.HandleFunc("POST /api/v1/model-stores/{storeID}/models/upload", func(w http.ResponseWriter, r *http.Request) {
+		h.ModelStore.UploadBaseModel(w, r, r.PathValue("storeID"))
+	})
+
+	// Trained models.
+	mux.HandleFunc("GET /api/v1/model-stores/{storeID}/trained", func(w http.ResponseWriter, r *http.Request) {
+		h.ModelStore.ListTrainedModels(w, r, r.PathValue("storeID"))
+	})
+	mux.HandleFunc("POST /api/v1/model-stores/{storeID}/trained/upload", func(w http.ResponseWriter, r *http.Request) {
+		h.ModelStore.UploadTrainedModel(w, r, r.PathValue("storeID"))
+	})
+}
+
+func registerFeedbackRoutes(mux *http.ServeMux, h Handlers) {
 	mux.HandleFunc("POST /api/v1/tasks/{taskID}/feedback", func(w http.ResponseWriter, r *http.Request) {
 		h.Feedback.Submit(w, r, r.PathValue("taskID"))
 	})
@@ -108,28 +166,18 @@ func NewRouter(h Handlers, webFS fs.FS) http.Handler {
 	mux.HandleFunc("POST /api/v1/tasks/{taskID}/feedback/fold", func(w http.ResponseWriter, r *http.Request) {
 		h.Feedback.Fold(w, r, r.PathValue("taskID"))
 	})
+}
 
-	// --- Agents ---.
-	if h.Agent != nil {
-		mux.HandleFunc("POST /api/v1/agents/fine-tuning", h.Agent.StartFineTuningAgent)
-		mux.HandleFunc("GET /api/v1/agents", h.Agent.ListAgentStates)
-		mux.HandleFunc("GET /api/v1/agents/{agentID}", h.Agent.GetAgentState)
-		mux.HandleFunc("POST /api/v1/agents/{agentID}/pause", h.Agent.PauseAgent)
-		mux.HandleFunc("POST /api/v1/agents/{agentID}/resume", h.Agent.ResumeAgent)
+func registerAgentRoutes(mux *http.ServeMux, h Handlers) {
+	if h.Agent == nil {
+		return
 	}
 
-	// --- Fine-tuning / Coding AI Agent ---.
-	registerFineTuneRoutes(mux, h.FineTune)
-
-	// --- Health check (useful for container orchestrators) ---.
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-	})
-
-	// --- Static web UI ---.
-	mux.Handle("/", http.FileServer(http.FS(webFS)))
-
-	return withLogging(mux)
+	mux.HandleFunc("POST /api/v1/agents/fine-tuning", h.Agent.StartFineTuningAgent)
+	mux.HandleFunc("GET /api/v1/agents", h.Agent.ListAgentStates)
+	mux.HandleFunc("GET /api/v1/agents/{agentID}", h.Agent.GetAgentState)
+	mux.HandleFunc("POST /api/v1/agents/{agentID}/pause", h.Agent.PauseAgent)
+	mux.HandleFunc("POST /api/v1/agents/{agentID}/resume", h.Agent.ResumeAgent)
 }
 
 func registerFineTuneRoutes(mux *http.ServeMux, h *FineTuneHandler) {

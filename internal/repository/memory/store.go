@@ -25,6 +25,7 @@ type snapshot struct {
 	FineTuneJobs     []*domain.FineTuneJob              `json:"finetune_jobs"`
 	TrainedModels    []*domain.TrainedModel             `json:"trained_models"`
 	Datasets         []*domain.DatasetInfo              `json:"datasets"`
+	ModelStores      []*domain.ModelStore               `json:"model_stores"`
 }
 
 // Store is the shared in-memory database backing all repositories, with
@@ -43,6 +44,7 @@ type Store struct {
 	FineTuneJobs     []*domain.FineTuneJob
 	TrainedModels    []*domain.TrainedModel
 	Datasets         []*domain.DatasetInfo
+	ModelStores      []*domain.ModelStore
 }
 
 // NewStore creates a store. If path is non-empty and an existing snapshot
@@ -60,6 +62,7 @@ func NewStore(path string) *Store {
 		FineTuneJobs:     []*domain.FineTuneJob{},
 		TrainedModels:    []*domain.TrainedModel{},
 		Datasets:         []*domain.DatasetInfo{},
+		ModelStores:      []*domain.ModelStore{},
 	}
 	s.load()
 
@@ -122,6 +125,10 @@ func (s *Store) load() {
 	if snap.Datasets != nil {
 		s.Datasets = snap.Datasets
 	}
+
+	if snap.ModelStores != nil {
+		s.ModelStores = snap.ModelStores
+	}
 }
 
 // persist writes the current state to disk. Caller must hold s.mu (read or write).
@@ -141,6 +148,7 @@ func (s *Store) persist() {
 		FineTuneJobs:     s.FineTuneJobs,
 		TrainedModels:    s.TrainedModels,
 		Datasets:         s.Datasets,
+		ModelStores:      s.ModelStores,
 	}
 
 	b, err := json.MarshalIndent(snap, "", "  ")

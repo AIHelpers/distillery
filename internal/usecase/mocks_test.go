@@ -400,6 +400,7 @@ func (m *mockModelSelector) ListBaseModels() []domain.BaseModel {
 	if m.catalog != nil {
 		return m.catalog
 	}
+
 	return []domain.BaseModel{m.model}
 }
 

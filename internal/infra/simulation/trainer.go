@@ -65,8 +65,8 @@ func (f *FineTuner) Start(
 		}
 
 		metrics := &domain.TrainingMetrics{
-			FinalLoss:     round2(loss),
-			EvalAccuracy:  round2(acc),
+			FinalLoss:     Round2(loss),
+			EvalAccuracy:  Round2(acc),
 			Epochs:        3,
 			TrainExamples: len(examples),
 		}
@@ -74,7 +74,8 @@ func (f *FineTuner) Start(
 	}()
 }
 
-func round2(v float64) float64 {
+// Round2 truncates a float to two decimal places (exporter/display helper).
+func Round2(v float64) float64 {
 	return float64(int(v*100)) / 100
 }
 

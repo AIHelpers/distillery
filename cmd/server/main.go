@@ -21,6 +21,7 @@ import (
 	"distillery/internal/domain"
 	"distillery/internal/exhaustruct"
 	infraagent "distillery/internal/infra/agent"
+	"distillery/internal/infra/modelstore"
 	"distillery/internal/infra/simulation"
 	localtraining "distillery/internal/infra/training"
 	"distillery/internal/repository/memory"
@@ -30,6 +31,7 @@ import (
 
 func main() {
 	exhaustructFlag := flag.Bool("exhaustruct", false, "run the exhaustruct struct-rewrite tool and exit")
+
 	flag.Parse()
 
 	if *exhaustructFlag {
@@ -53,6 +55,7 @@ func main() {
 	ftJobRepo := memory.NewFineTuneJobRepo(store)
 	ftModelRepo := memory.NewTrainedModelRepo(store)
 	ftDatasetRepo := memory.NewDatasetRepo(store)
+	modelStoreRepo := memory.NewModelStoreRepo(store)
 
 	// --- Infra (GPU orchestration / model serving) ---.
 	//
@@ -64,15 +67,18 @@ func main() {
 
 	backend := envOr("TRAINING_BACKEND", "simulation")
 
-	var tuner domain.FineTuner
-	var exporter domain.Exporter
+	var (
+		tuner    domain.FineTuner
+		exporter domain.Exporter
+	)
+
 	if backend == "local" {
 		trainingCfg := localtraining.Config{
 			CPUFallback:   envOr("TRAINING_CPU_FALLBACK", "false") == "true",
 			MaxJobHistory: envInt("TRAINING_MAX_JOB_HISTORY", 0),
 		}
-		tuner = localtraining.NewLocalTrainer(trainingCfg)
-		exporter = localtraining.NewLocalExporter(trainingCfg)
+		tuner = localtraining.NewLocalTrainer(&trainingCfg)
+		exporter = localtraining.NewLocalExporter(&trainingCfg)
 	} else {
 		tuner = simulation.NewFineTuner()
 		exporter = simulation.NewExporter()
@@ -91,6 +97,10 @@ func main() {
 		inferenceEngine, exporter, idGen,
 	)
 	feedbackUC := usecase.NewFeedbackUsecase(taskRepo, feedbackRepo, exampleRepo, idGen)
+
+	// --- Model stores (choose / download / upload base + trained models) ---.
+	modelTransfer := modelstore.New(envOr("MODEL_CACHE_DIR", ""))
+	modelStoreUC := usecase.NewModelStoreUsecase(modelStoreRepo, modelTransfer, idGen)
 
 	// --- Agent orchestration ---.
 	toolReg := memory.NewToolRegistry()
@@ -115,6 +125,7 @@ func main() {
 		Feedback:   deliveryhttp.NewFeedbackHandler(feedbackUC),
 		Agent:      deliveryhttp.NewAgentHandler(agentOrchUC),
 		FineTune:   deliveryhttp.NewFineTuneHandler(ftUC),
+		ModelStore: deliveryhttp.NewModelStoreHandler(modelStoreUC),
 	}
 	router := deliveryhttp.NewRouter(handlers, web.FS())
 
@@ -153,10 +164,14 @@ func envOr(key, def string) string {
 }
 
 func envInt(key string, def int) int {
-	if v := os.Getenv(key); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
-		}
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+
+	n, err := strconv.Atoi(v)
+	if err == nil {
+		return n
 	}
 
 	return def
