@@ -72,16 +72,34 @@ func main() {
 		exporter domain.Exporter
 	)
 
+	// Shared progress store for async GGUF conversions (used by both backends).
+	ggufProgress := localtraining.NewGGUFProgressStore()
+
 	if backend == "local" {
+		// MODEL_CACHE_DIR is shared by training and GGUF conversion so the
+		// base model weights only need to be downloaded once.
+		modelCache := envOr("MODEL_CACHE_DIR", "")
 		trainingCfg := localtraining.Config{
 			CPUFallback:   envOr("TRAINING_CPU_FALLBACK", "false") == "true",
 			MaxJobHistory: envInt("TRAINING_MAX_JOB_HISTORY", 0),
+			ModelCacheDir: modelCache,
 		}
 		tuner = localtraining.NewLocalTrainer(&trainingCfg)
-		exporter = localtraining.NewLocalExporter(&trainingCfg)
+		localExporter := localtraining.NewLocalExporter(&trainingCfg)
+		localExporter.Progress = ggufProgress
+		exporter = localExporter
 	} else {
 		tuner = simulation.NewFineTuner()
-		exporter = simulation.NewExporter()
+		// Even in simulation mode, GGUF export delegates to the real
+		// production converter (training.LocalExporter) so a real, full-size
+		// GGUF is produced from any trained weights on disk instead of a
+		// fake pseudo-random file. When no weights exist, the converter
+		// fails fast with an actionable "no trained adapter" error.
+		ggufConverter := localtraining.NewLocalExporter(&localtraining.Config{
+			ModelCacheDir: envOr("MODEL_CACHE_DIR", ""),
+		})
+		ggufConverter.Progress = ggufProgress
+		exporter = simulation.NewExporterWithGGUF(ggufConverter)
 	}
 
 	inferenceEngine := simulation.NewInferenceEngine()

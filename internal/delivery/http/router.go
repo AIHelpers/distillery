@@ -88,6 +88,10 @@ func registerTaskRoutes(mux *http.ServeMux, h Handlers) {
 	mux.HandleFunc("GET /api/v1/training/{jobID}", func(w http.ResponseWriter, r *http.Request) {
 		h.Training.Get(w, r, r.PathValue("jobID"))
 	})
+	// Delete a fine-tuned model (a completed/failed training job version).
+	mux.HandleFunc("DELETE /api/v1/training/{jobID}", func(w http.ResponseWriter, r *http.Request) {
+		h.Training.Delete(w, r, r.PathValue("jobID"))
+	})
 	// List the base-model catalog the user can pick from for fine-tuning.
 	mux.HandleFunc("GET /api/v1/models", h.Training.Models)
 }
@@ -98,6 +102,27 @@ func registerDeploymentRoutes(mux *http.ServeMux, h Handlers) {
 	})
 	mux.HandleFunc("POST /api/v1/tasks/{taskID}/training/{jobID}/deploy", func(w http.ResponseWriter, r *http.Request) {
 		h.Deployment.DeployVersion(w, r, r.PathValue("taskID"), r.PathValue("jobID"))
+	})
+	// GGUF export (HomeBred-LLM / llama.cpp compatible model file download).
+	// Sync endpoints (block until conversion is done).
+	mux.HandleFunc("GET /api/v1/tasks/{taskID}/export/gguf", func(w http.ResponseWriter, r *http.Request) {
+		h.Deployment.ExportGGUF(w, r, r.PathValue("taskID"))
+	})
+	mux.HandleFunc("GET /api/v1/tasks/{taskID}/training/{jobID}/export/gguf", func(w http.ResponseWriter, r *http.Request) {
+		h.Deployment.ExportGGUFVersion(w, r, r.PathValue("taskID"), r.PathValue("jobID"))
+	})
+	// Async GGUF endpoints (start conversion, poll progress, download when ready).
+	mux.HandleFunc("POST /api/v1/tasks/{taskID}/export/gguf/async", func(w http.ResponseWriter, r *http.Request) {
+		h.Deployment.StartGGUFAsync(w, r, r.PathValue("taskID"))
+	})
+	mux.HandleFunc("POST /api/v1/tasks/{taskID}/training/{jobID}/export/gguf/async", func(w http.ResponseWriter, r *http.Request) {
+		h.Deployment.StartGGUFAsyncVersion(w, r, r.PathValue("taskID"), r.PathValue("jobID"))
+	})
+	mux.HandleFunc("GET /api/v1/tasks/{taskID}/export/gguf/progress/{sessionID}", func(w http.ResponseWriter, r *http.Request) {
+		h.Deployment.GetGGUFProgress(w, r, r.PathValue("sessionID"))
+	})
+	mux.HandleFunc("GET /api/v1/tasks/{taskID}/export/gguf/download/{sessionID}", func(w http.ResponseWriter, r *http.Request) {
+		h.Deployment.DownloadGGUF(w, r, r.PathValue("sessionID"))
 	})
 	mux.HandleFunc("GET /api/v1/tasks/{taskID}/deployments", func(w http.ResponseWriter, r *http.Request) {
 		h.Deployment.List(w, r, r.PathValue("taskID"))

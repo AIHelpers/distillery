@@ -60,6 +60,41 @@ func (r *TrainingRepo) Update(j *domain.TrainingJob) error {
 	return domain.ErrNotFound
 }
 
+// Delete removes a training job from the store and stops any deployments
+// that were serving that exact job version.
+func (r *TrainingRepo) Delete(id string) error {
+	r.store.mu.Lock()
+	defer r.store.mu.Unlock()
+
+	for taskID, list := range r.store.TrainingJobs {
+		for i, j := range list {
+			if j.ID != id {
+				continue
+			}
+
+			// Stop deployments serving this exact job version.
+			deployList := r.store.Deployments[taskID]
+			for di, d := range deployList {
+				if d.TrainingJobID == id && d.Status == domain.DeploymentActive {
+					deployList[di].Status = domain.DeploymentStopped
+				}
+			}
+
+			// Remove the job from the in-memory list.
+			r.store.TrainingJobs[taskID] = append(list[:i], list[i+1:]...)
+			if len(r.store.TrainingJobs[taskID]) == 0 {
+				delete(r.store.TrainingJobs, taskID)
+			}
+
+			r.store.persist()
+
+			return nil
+		}
+	}
+
+	return domain.ErrNotFound
+}
+
 func (r *TrainingRepo) LatestCompleted(taskID string) (*domain.TrainingJob, error) {
 	r.store.mu.RLock()
 	defer r.store.mu.RUnlock()

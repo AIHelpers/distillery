@@ -324,11 +324,6 @@ def main() -> int:
             eval_result = trainer.evaluate()
             final_metrics.update(eval_result)
 
-        metrics_path = output_dir / "metrics.json"
-        final_metrics["best_checkpoint"] = trainer.state.best_model_checkpoint or ""
-        final_metrics["global_step"] = trainer.state.global_step
-        save_metrics(output_dir, final_metrics)
-
         writer.event("complete", status="completed", **final_metrics)
 
         if stop_requested:

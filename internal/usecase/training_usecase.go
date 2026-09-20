@@ -164,6 +164,22 @@ func (u *TrainingUsecase) ListJobs(taskID string) ([]*domain.TrainingJob, error)
 	return u.jobs.ListByTask(taskID)
 }
 
+// DeleteJob removes a fine-tuned model (a training job version). Deleting an
+// active run is rejected. Any deployment serving this exact version is
+// automatically stopped by the repository.
+func (u *TrainingUsecase) DeleteJob(jobID string) error {
+	job, err := u.jobs.Get(jobID)
+	if err != nil {
+		return err
+	}
+
+	if job.Status == domain.TrainingQueued || job.Status == domain.TrainingRunning {
+		return domain.ErrAlreadyRunning
+	}
+
+	return u.jobs.Delete(jobID)
+}
+
 func (u *TrainingUsecase) LatestCompleted(taskID string) (*domain.TrainingJob, error) {
 	return u.jobs.LatestCompleted(taskID)
 }

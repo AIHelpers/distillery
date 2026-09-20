@@ -4,7 +4,7 @@
 Run before offline training so `trainer/run.py` doesn't need the internet
 mid-job:
 
-    python scripts/pull_models.py [--model Qwen2.5-0.5B-Instruct] [--all]
+    python scripts/pull_models.py [--model Qwen3-0.6B] [--all]
 
 Requires network access (pip install transformers huggingface_hub).
 """
@@ -13,13 +13,13 @@ import argparse
 import sys
 
 MODEL_REPOS = {
-    "Qwen2.5-0.5B-Instruct": "Qwen/Qwen2.5-0.5B-Instruct",
-    "Qwen2.5-1.5B-Instruct": "Qwen/Qwen2.5-1.5B-Instruct",
+    "Qwen3-0.6B": "Qwen/Qwen3-0.6B",
+    "Qwen3-1.7B": "Qwen/Qwen3-1.7B",
     "Llama-3.2-1B-Instruct": "meta-llama/Llama-3.2-1B-Instruct",
     "Llama-3.2-3B-Instruct": "meta-llama/Llama-3.2-3B-Instruct",
     "Phi-3.5-mini-instruct": "microsoft/Phi-3.5-mini-instruct",
-    "Qwen2.5-Coder-3B": "Qwen/Qwen2.5-Coder-3B",
-    "Qwen2.5-Coder-7B": "Qwen/Qwen2.5-Coder-7B",
+    "Qwen3-4B": "Qwen/Qwen3-4B",
+    "Qwen3-8B": "Qwen/Qwen3-8B",
 }
 
 

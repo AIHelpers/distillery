@@ -173,6 +173,7 @@ type mockTrainingRepo struct {
 	err             error
 	createdJob      *domain.TrainingJob
 	updatedJob      *domain.TrainingJob
+	deletedID       string
 }
 
 func (m *mockTrainingRepo) Create(j *domain.TrainingJob) error {
@@ -219,6 +220,22 @@ func (m *mockTrainingRepo) Update(j *domain.TrainingJob) error {
 	}
 
 	return nil
+}
+
+func (m *mockTrainingRepo) Delete(id string) error {
+	m.deletedID = id
+	if m.err != nil {
+		return m.err
+	}
+
+	for i, j := range m.jobs {
+		if j.ID == id {
+			m.jobs = append(m.jobs[:i], m.jobs[i+1:]...)
+			return nil
+		}
+	}
+
+	return domain.ErrNotFound
 }
 
 func (m *mockTrainingRepo) LatestCompleted(_ string) (*domain.TrainingJob, error) {

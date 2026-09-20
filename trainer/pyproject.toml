@@ -19,8 +19,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Pure-Python GGUF — no native compilation required (primary path).
 gguf = [
-    "llama-cpp-python>=0.2.0",
+    "gguf>=0.10.0",
+]
+# Optional fallback: llama-cpp-python (requires native C++ compilation).
+gguf-native = [
+    "llama-cpp-python>=0.2.5",
     "torchao>=0.1.0",
 ]
 

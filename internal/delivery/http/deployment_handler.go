@@ -2,7 +2,9 @@ package http
 
 import (
 	"bufio"
+	"crypto/rand"
 	"encoding/csv"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -109,8 +111,8 @@ func (h *DeploymentHandler) Invoke(w http.ResponseWriter, r *http.Request, deplo
 	})
 }
 
-// InvokeBatch accepts a text body вЂ” either CSV with an "input" column, or
-// plain newline-separated inputs вЂ” and returns CSV predictions. This is the
+// InvokeBatch accepts a text body -- either CSV with an "input" column, or
+// plain newline-separated inputs -- and returns CSV predictions. This is the
 // bulk workload narrow-task deployments exist to serve efficiently.
 func (h *DeploymentHandler) InvokeBatch(w http.ResponseWriter, r *http.Request, deploymentID string) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, 5<<20)) // 5MB cap.
@@ -121,7 +123,7 @@ func (h *DeploymentHandler) InvokeBatch(w http.ResponseWriter, r *http.Request, 
 
 	inputs := parseBatchInputs(string(body))
 	if len(inputs) == 0 {
-		writeError(w, http.StatusBadRequest, "no inputs found вЂ” provide one per line, or a CSV with an \"input\" column")
+		writeError(w, http.StatusBadRequest, "no inputs found -- provide one per line, or a CSV with an \"input\" column")
 		return
 	}
 
@@ -154,6 +156,147 @@ func (h *DeploymentHandler) Export(w http.ResponseWriter, _ *http.Request, taskI
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
 	_, _ = w.Write(data)
 }
+
+// ExportGGUF downloads the task's latest completed model as a GGUF file
+// (HomeBred-LLM / llama.cpp compatible).
+func (h *DeploymentHandler) ExportGGUF(w http.ResponseWriter, r *http.Request, taskID string) {
+	h.serveGGUF(w, taskID, "", ggufQuantization(r))
+}
+
+// ExportGGUFVersion downloads a specific training job version's GGUF file.
+func (h *DeploymentHandler) ExportGGUFVersion(w http.ResponseWriter, r *http.Request, taskID, jobID string) {
+	h.serveGGUF(w, taskID, jobID, ggufQuantization(r))
+}
+
+// ggufQuantization reads the ?quantization= query parameter, falling back to
+// the default when absent or invalid.
+func ggufQuantization(r *http.Request) string {
+	if q := strings.TrimSpace(r.URL.Query().Get("quantization")); q != "" {
+		// Validate against known quantizations; fall back to default on bad input.
+		ok := false
+
+		for _, valid := range []string{"q2_k", "q3_k_s", "q3_k_m", "q3_k_l", "q4_0", "q4_1", "q4_k_s", "q4_k_m", "q5_0", "q5_1", "q5_k_s", "q5_k_m", "q6_k", "q8_0", "f16", "f32"} {
+			if strings.EqualFold(q, valid) {
+				ok = true
+				break
+			}
+		}
+
+		if ok {
+			return strings.ToLower(q)
+		}
+	}
+
+	return defaultGGUFQuantization
+}
+
+// serveGGUF handles the common GGUF attachment response path. When jobID is
+// empty, the latest completed job for the task is used.
+func (h *DeploymentHandler) serveGGUF(w http.ResponseWriter, taskID, jobID, quantization string) {
+	opts := domain.GGUFExportOptions{Quantization: quantization}
+
+	var (
+		data     []byte
+		filename string
+		err      error
+	)
+
+	if jobID == "" {
+		data, filename, err = h.uc.ExportGGUF(taskID, opts)
+	} else {
+		data, filename, err = h.uc.ExportGGUFVersion(taskID, jobID, opts)
+	}
+
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	_, _ = w.Write(data)
+}
+
+// StartGGUFAsync starts an async GGUF conversion and returns the session ID
+// for progress polling.
+func (h *DeploymentHandler) StartGGUFAsync(w http.ResponseWriter, r *http.Request, taskID string) {
+	sessionID := generateGGUFSessionID()
+	quantization := ggufQuantization(r)
+
+	opts := domain.GGUFExportOptions{Quantization: quantization}
+	err := h.uc.StartGGUFAsync(taskID, "", sessionID, opts)
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]string{
+		"session_id":      sessionID,
+		"quantization":    quantization,
+		"status_endpoint": fmt.Sprintf("/api/v1/tasks/%s/export/gguf/progress/%s", taskID, sessionID),
+	})
+}
+
+// StartGGUFAsyncVersion starts an async GGUF conversion for a specific job version.
+func (h *DeploymentHandler) StartGGUFAsyncVersion(w http.ResponseWriter, r *http.Request, taskID, jobID string) {
+	sessionID := generateGGUFSessionID()
+	quantization := ggufQuantization(r)
+
+	opts := domain.GGUFExportOptions{Quantization: quantization}
+	err := h.uc.StartGGUFAsync(taskID, jobID, sessionID, opts)
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusAccepted, map[string]string{
+		"session_id":      sessionID,
+		"quantization":    quantization,
+		"status_endpoint": fmt.Sprintf("/api/v1/tasks/%s/export/gguf/progress/%s", taskID, sessionID),
+	})
+}
+
+// GetGGUFProgress returns the current progress of an async GGUF conversion.
+func (h *DeploymentHandler) GetGGUFProgress(w http.ResponseWriter, _ *http.Request, sessionID string) {
+	p, err := h.uc.GetGGUFProgress(sessionID)
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, p)
+}
+
+// DownloadGGUF downloads the completed GGUF file for a ready session.
+// The file is streamed directly from disk via http.ServeFile -- it is never
+// loaded into memory, supporting multi-GB GGUF files without OOM.
+// After the file has been fully streamed, the GGUF file and session are
+// cleaned up so large model files don't accumulate on disk.
+func (h *DeploymentHandler) DownloadGGUF(w http.ResponseWriter, r *http.Request, sessionID string) {
+	filePath, filename, err := h.uc.GetGGUFResult(sessionID)
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	http.ServeFile(w, r, filePath)
+
+	// Clean up the GGUF file and session now that it has been streamed.
+	h.uc.CleanupGGUFSession(sessionID)
+}
+
+// generateGGUFSessionID generates a unique session ID for a GGUF conversion.
+func generateGGUFSessionID() string {
+	b := make([]byte, 12)
+	_, _ = rand.Read(b)
+
+	return "gguf_" + hex.EncodeToString(b)
+}
+
+// defaultGGUFQuantization is the default quantization applied when the
+// client does not select one explicitly.
+const defaultGGUFQuantization = "q4_k_m"
 
 // apiKeyFromRequest reads the deployment API key from either
 // "Authorization: Bearer <key>" or "X-API-Key: <key>".

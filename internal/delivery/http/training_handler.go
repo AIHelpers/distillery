@@ -68,3 +68,14 @@ func (h *TrainingHandler) Get(w http.ResponseWriter, _ *http.Request, jobID stri
 
 	writeJSON(w, http.StatusOK, job)
 }
+
+// Delete removes a fine-tuned model (a training job version).
+func (h *TrainingHandler) Delete(w http.ResponseWriter, _ *http.Request, jobID string) {
+	err := h.uc.DeleteJob(jobID)
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}

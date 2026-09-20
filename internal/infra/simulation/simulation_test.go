@@ -53,7 +53,7 @@ func TestModelSelector_SelectBaseModel_Classification(t *testing.T) {
 
 	// Small dataset, short inputs/outputs → smallest model (score 0).
 	got := ms.SelectBaseModel(task, 100, 50, 20)
-	if got.Name != "Qwen2.5-0.5B-Instruct" {
+	if got.Name != "Qwen3-0.6B" {
 		t.Errorf("expected smallest model for trivial classification, got %q", got.Name)
 	}
 }
@@ -65,11 +65,11 @@ func TestModelSelector_SelectBaseModel_Generation(t *testing.T) {
 	task := &domain.Task{Type: domain.TaskGeneration}
 
 	// Large generation dataset with long outputs → largest reachable model
-	// (score 5 = Qwen2.5-Coder-3B; the catalog's 7B entry requires score 6
+	// (score 5 = Qwen3-4B; the catalog's 7B entry requires score 6
 	// which the current scoring rules cannot produce).
 	got := ms.SelectBaseModel(task, 1000, 1000, 500)
-	if got.Name != "Qwen2.5-Coder-3B" {
-		t.Errorf("expected Qwen2.5-Coder-3B for heavy generation, got %q", got.Name)
+	if got.Name != "Qwen3-4B" {
+		t.Errorf("expected Qwen3-4B for heavy generation, got %q", got.Name)
 	}
 }
 
@@ -81,8 +81,8 @@ func TestModelSelector_SelectBaseModel_Extraction(t *testing.T) {
 
 	// Medium extraction dataset → score 1, second model.
 	got := ms.SelectBaseModel(task, 100, 200, 50)
-	if got.Name != "Qwen2.5-1.5B-Instruct" {
-		t.Errorf("expected Qwen2.5-1.5B for extraction, got %q", got.Name)
+	if got.Name != "Qwen3-1.7B" {
+		t.Errorf("expected Qwen3-1.7B for extraction, got %q", got.Name)
 	}
 }
 
@@ -106,10 +106,10 @@ func TestModelSelector_SelectBaseModel_ScoreCap(t *testing.T) {
 	task := &domain.Task{Type: domain.TaskGeneration}
 
 	// Extreme dataset → score 5 (generation=2 + output>200=+2 + input>800=+1).
-	// With 7 catalog entries, index 5 = Qwen2.5-Coder-3B.
+	// With 7 catalog entries, index 5 = Qwen3-4B.
 	got := ms.SelectBaseModel(task, 10_000, 10_000, 10_000)
-	if got.Name != "Qwen2.5-Coder-3B" {
-		t.Errorf("expected Qwen2.5-Coder-3B for extreme dataset, got %q", got.Name)
+	if got.Name != "Qwen3-4B" {
+		t.Errorf("expected Qwen3-4B for extreme dataset, got %q", got.Name)
 	}
 }
 
@@ -377,6 +377,131 @@ func TestExporter_BuildsZip(t *testing.T) {
 
 		break
 	}
+}
+
+func TestExporter_GGUF_RejectsSimulationBackend(t *testing.T) {
+	t.Parallel()
+
+	e := simulation.NewExporter()
+	job := &domain.TrainingJob{
+		ID:      "job_gguf",
+		Version: 3,
+		Status:  domain.TrainingCompleted,
+		BaseModel: domain.BaseModel{
+			Name:   "Base Model",
+			RepoID: "org/base-model",
+		},
+	}
+
+	data, filename, err := e.BuildGGUF(&domain.Task{
+		Name: "My Fine-Tune Task",
+		Type: domain.TaskGeneration,
+	}, job, domain.GGUFExportOptions{Quantization: "q4_k_m"})
+
+	if data != nil {
+		t.Errorf("expected nil data when no GGUF converter is wired, got %d bytes", len(data))
+	}
+
+	if filename != "" {
+		t.Errorf("expected empty filename when no GGUF converter is wired, got %q", filename)
+	}
+
+	if err == nil {
+		t.Fatal("expected an error when no GGUF converter is wired")
+	}
+
+	// The error must clearly tell the user how to get a real GGUF — not
+	// silently hand them a fake small model.
+	if !strings.Contains(err.Error(), "TRAINING_BACKEND=local") {
+		t.Errorf("expected error to mention TRAINING_BACKEND=local, got %v", err)
+	}
+}
+
+// TestExporter_GGUF_DelegatesToRealConverter verifies that when a real
+// production converter is wired up, the simulation exporter delegates to it
+// instead of returning a stub error. A fake converter that returns a fixed
+// payload is used so the test does not depend on the Python toolchain.
+func TestExporter_GGUF_DelegatesToRealConverter(t *testing.T) {
+	t.Parallel()
+
+	job := &domain.TrainingJob{
+		ID:      "job_delegate",
+		Version: 1,
+		Status:  domain.TrainingCompleted,
+		BaseModel: domain.BaseModel{
+			Name:   "Base Model",
+			RepoID: "org/base-model",
+		},
+	}
+
+	want := []byte("GGUF\x03\x00\x00\x00") // plausible GGUF magic header.
+	wantFilename := "task-v1-q4_k_m.gguf"
+
+	e := simulation.NewExporterWithGGUF(&fakeGGUFExporter{
+		data:     want,
+		filename: wantFilename,
+	})
+
+	data, filename, err := e.BuildGGUF(&domain.Task{
+		Name: "Delegate Task",
+		Type: domain.TaskGeneration,
+	}, job, domain.GGUFExportOptions{Quantization: "q4_k_m"})
+	if err != nil {
+		t.Fatalf("expected delegation to succeed, got %v", err)
+	}
+
+	if !bytes.Equal(data, want) {
+		t.Errorf("expected delegated converter payload, got %d bytes", len(data))
+	}
+
+	if filename != wantFilename {
+		t.Errorf("expected filename %q, got %q", wantFilename, filename)
+	}
+}
+
+// TestExporter_GGUF_DelegatesError verifies errors from the real converter
+// propagate through the simulation exporter unchanged.
+func TestExporter_GGUF_DelegatesError(t *testing.T) {
+	t.Parallel()
+
+	job := &domain.TrainingJob{
+		ID:      "job_delegate_err",
+		Version: 1,
+		Status:  domain.TrainingCompleted,
+		BaseModel: domain.BaseModel{
+			Name:   "Base Model",
+			RepoID: "org/base-model",
+		},
+	}
+
+	e := simulation.NewExporterWithGGUF(&fakeGGUFExporter{
+		err: errors.New("no trained adapter or merged model to convert"),
+	})
+
+	_, _, err := e.BuildGGUF(&domain.Task{
+		Name: "Delegate Task",
+		Type: domain.TaskGeneration,
+	}, job, domain.GGUFExportOptions{Quantization: "q4_k_m"})
+	if err == nil {
+		t.Fatal("expected propagated error from real converter")
+	}
+
+	// Errors from the real converter propagate through the simulation
+	// exporter unchanged — no wrapping, so the original message is visible.
+	if !strings.Contains(err.Error(), "no trained adapter") {
+		t.Errorf("expected converter error to propagate, got %v", err)
+	}
+}
+
+// fakeGGUFExporter is a test double for domain.GGUFExporter.
+type fakeGGUFExporter struct {
+	data     []byte
+	filename string
+	err      error
+}
+
+func (f *fakeGGUFExporter) BuildGGUF(_ *domain.Task, _ *domain.TrainingJob, _ domain.GGUFExportOptions) ([]byte, string, error) {
+	return f.data, f.filename, f.err
 }
 
 func TestExporter_NoMetrics_SafeAccZero(t *testing.T) {

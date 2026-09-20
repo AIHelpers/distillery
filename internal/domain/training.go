@@ -54,6 +54,7 @@ type TrainingJobRepository interface {
 	Get(id string) (*TrainingJob, error)
 	ListByTask(taskID string) ([]*TrainingJob, error)
 	Update(j *TrainingJob) error
+	Delete(id string) error
 	LatestCompleted(taskID string) (*TrainingJob, error)
 }
 

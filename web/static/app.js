@@ -5,6 +5,10 @@ const state = {
   activeTaskId: null,
   activeTab: "dataset",
   pollTimer: null,
+  // Tracks whether a training run was active on the previous poll, so we can
+  // do a final panel refresh when it transitions to completed/failed (the
+  // UI would otherwise stay stuck on the last in-progress percentage).
+  wasTrainingActive: false,
   // The user's chosen base model for fine-tuning, keyed by task ID. This
   // lets the dropdown survive the 1.5s progress polls without resetting
   // the user's selection.
@@ -143,6 +147,7 @@ function closeModal() {
 // --- Task detail ---
 async function renderTaskDetail() {
   clearInterval(state.pollTimer);
+  state.wasTrainingActive = false;
   const main = document.getElementById("main");
   const task = state.tasks.find((t) => t.id === state.activeTaskId);
   if (!task) {
@@ -207,7 +212,12 @@ async function renderTaskDetail() {
     try {
       const jobs = await api("GET", `/tasks/${task.id}/training`);
       const hasActive = (jobs || []).some((j) => j.status === "queued" || j.status === "running");
-      if (hasActive) renderTrainingPanel(task);
+      // When a run was active on the previous poll but is now terminal
+      // (completed/failed), render once more so the UI shows the final state
+      // (100% / metrics) instead of staying stuck on the last tick (e.g. 95%).
+      const justFinished = state.wasTrainingActive && !hasActive;
+      state.wasTrainingActive = hasActive;
+      if (hasActive || justFinished) renderTrainingPanel(task);
     } catch (e) {
       // Transient network errors are safe to ignore during polling.
     }
@@ -580,6 +590,21 @@ async function renderTrainingPanel(task) {
       }
     };
   });
+
+  panel.querySelectorAll("[data-delete-job]").forEach((btn) => {
+    btn.onclick = async () => {
+      if (!confirm(`Delete fine-tuned model v${btn.dataset.deleteVersion}? This permanently removes this training run and any deployment serving it.`)) return;
+      try {
+        await api("DELETE", `/training/${btn.dataset.deleteJob}`);
+        toast(`Fine-tuned model v${btn.dataset.deleteVersion} deleted.`);
+        renderTrainingPanel(task);
+        renderDeployPanel(task);
+        renderDocsPanel(task);
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
+  });
 }
 
 function renderJobRow(j) {
@@ -589,6 +614,13 @@ function renderJobRow(j) {
     ? `<span class="hint" style="color:var(--err)">${escapeHtml(j.error)}</span>`
     : "";
   const isRunning = j.status === "running" || j.status === "queued";
+  const actions = [];
+  if (j.status === "completed") {
+    actions.push(`<button class="btn small" data-deploy-job="${j.id}" data-deploy-version="${j.version}">Deploy this version</button>`);
+  }
+  if (!isRunning) {
+    actions.push(`<button class="btn small danger" data-delete-job="${j.id}" data-delete-version="${j.version}">Delete</button>`);
+  }
   return `
     <div class="job-row">
       <div style="flex:1">
@@ -599,7 +631,7 @@ function renderJobRow(j) {
             <div class="gauge-pct">${j.progress}%</div>
           </div>` : `<div>${metrics}</div>`}
       </div>
-      ${j.status === "completed" ? `<button class="btn small" data-deploy-job="${j.id}" data-deploy-version="${j.version}">Deploy this version</button>` : ""}
+      ${actions.join(" ")}
     </div>
   `;
 }
@@ -711,6 +743,31 @@ async function renderDeployPanel(task) {
       run it anywhere, no lock-in to this platform.</p>
       <button class="btn" id="export-btn" ${!latestJob ? "disabled" : ""}>Download export package</button>
     </div>
+
+    <div class="card">
+      <h3>GGUF export (HomeBred-LLM / llama.cpp)</h3>
+      <p class="hint">Download your trained model in GGUF format — load it directly into HomeBred-LLM
+      or llama.cpp on any machine. The merge + convert + quantize runs on-demand when you click;
+      a progress bar will show each step in real time.</p>
+      <div class="inline-form">
+        <label style="align-self:center; white-space:nowrap;">Quantization</label>
+        <select id="gguf-quant-select" style="flex:1;">
+          <option value="q4_k_m" selected>Q4_K_M (balanced)</option>
+          <option value="q5_k_m">Q5_K_M (higher quality)</option>
+          <option value="q8_0">Q8_0 (best quality, bigger)</option>
+          <option value="f16">F16 (no quantization)</option>
+        </select>
+        <button class="btn" id="gguf-export-btn" ${!latestJob ? "disabled" : ""}>Download GGUF model</button>
+      </div>
+      <div id="gguf-progress-container" style="display:none; margin-top:14px;">
+        <div class="gauge-wrap">
+          <div class="gauge"><div class="gauge-fill" id="gguf-progress-bar" style="width:0%"></div></div>
+          <div class="gauge-pct" id="gguf-progress-pct">0%</div>
+        </div>
+        <div class="hint" id="gguf-progress-step" style="margin-top:6px;">Starting…</div>
+        <div class="hint" id="gguf-progress-detail" style="margin-top:2px;"></div>
+      </div>
+    </div>
   `;
 
   const deployBtn = document.getElementById("deploy-btn");
@@ -811,6 +868,72 @@ async function renderDeployPanel(task) {
   if (exportBtn) {
     exportBtn.onclick = () => {
       window.location.href = `${API}/tasks/${task.id}/export`;
+    };
+  }
+  const ggufExportBtn = document.getElementById("gguf-export-btn");
+  if (ggufExportBtn) {
+    ggufExportBtn.onclick = async () => {
+      const quant = document.getElementById("gguf-quant-select").value;
+      const progressContainer = document.getElementById("gguf-progress-container");
+      const progressBar = document.getElementById("gguf-progress-bar");
+      const progressPct = document.getElementById("gguf-progress-pct");
+      const progressStep = document.getElementById("gguf-progress-step");
+      const progressDetail = document.getElementById("gguf-progress-detail");
+
+      // Show progress UI and disable the button while converting.
+      progressContainer.style.display = "block";
+      ggufExportBtn.disabled = true;
+      progressBar.style.width = "0%";
+      progressPct.textContent = "0%";
+      progressStep.textContent = "Starting…";
+      progressDetail.textContent = "";
+
+      try {
+        // 1. Start async conversion.
+        const startRes = await api("POST", `/tasks/${task.id}/export/gguf/async?quantization=${encodeURIComponent(quant)}`);
+        const sessionID = startRes.session_id;
+
+        // 2. Poll progress until ready or error.
+        const pollProgress = async () => {
+          for (;;) {
+            const p = await api("GET", `/tasks/${task.id}/export/gguf/progress/${sessionID}`);
+            progressBar.style.width = p.percent + "%";
+            progressPct.textContent = p.percent + "%";
+            progressStep.textContent = p.step || "";
+            progressDetail.textContent = p.detail || "";
+
+            if (p.status === "ready") {
+              return p;
+            }
+            if (p.status === "error") {
+              throw new Error(p.error || "Conversion failed");
+            }
+
+            // Wait 1s before next poll.
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          }
+        };
+
+        await pollProgress();
+
+        // 3. Download the ready GGUF file. Use a direct link instead of
+        // fetch+blob so the browser streams the (potentially multi-GB) file
+        // to disk without loading it all into memory first.
+        const a = document.createElement("a");
+        a.href = API + `/tasks/${task.id}/export/gguf/download/${sessionID}`;
+        a.download = "model.gguf"; // fallback; server sets Content-Disposition
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        toast("GGUF model download started.");
+        progressContainer.style.display = "none";
+      } catch (e) {
+        toast(e.message, true);
+        progressStep.textContent = "Error: " + e.message;
+        progressStep.style.color = "var(--err)";
+      } finally {
+        ggufExportBtn.disabled = false;
+      }
     };
   }
 }
@@ -947,6 +1070,10 @@ async function renderDocsPanel(task) {
           <tr><td>POST</td><td>/api/v1/tasks/{id}/deploy</td><td>Deploy the latest model (returns a one-time API key)</td></tr>
           <tr><td>POST</td><td>/api/v1/tasks/{id}/training/{jobId}/deploy</td><td>Deploy a specific version (rollback)</td></tr>
           <tr><td>GET</td><td>/api/v1/tasks/{id}/export</td><td>Download portable export package</td></tr>
+          <tr><td>GET</td><td>/api/v1/tasks/{id}/export/gguf?quantization=q4_k_m</td><td>Download trained model in GGUF (sync, blocks until done)</td></tr>
+          <tr><td>POST</td><td>/api/v1/tasks/{id}/export/gguf/async?quantization=q4_k_m</td><td>Start async GGUF conversion (returns session_id)</td></tr>
+          <tr><td>GET</td><td>/api/v1/tasks/{id}/export/gguf/progress/{sessionId}</td><td>Poll GGUF conversion progress</td></tr>
+          <tr><td>GET</td><td>/api/v1/tasks/{id}/export/gguf/download/{sessionId}</td><td>Download completed GGUF file</td></tr>
         </tbody>
       </table>
       <p class="hint">Full reference in the project README.</p>

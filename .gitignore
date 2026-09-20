@@ -32,3 +32,12 @@ go.work.sum
 # .vscode/
 
 *.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Runtime training artifacts
+data/training/

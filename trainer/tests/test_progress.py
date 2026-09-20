@@ -47,7 +47,7 @@ def test_config_from_dict_defaults() -> None:
     cfg = Config.from_dict(
         {
             "job_id": "job-1",
-            "base_model": "Qwen2.5-0.5B-Instruct",
+            "base_model": "Qwen3-0.6B",
             "language": "python",
             "skill": "code_generation",
             "dataset_path": "/tmp/ds.jsonl",
@@ -65,7 +65,7 @@ def test_config_from_dict_overrides() -> None:
     cfg = Config.from_dict(
         {
             "job_id": "job-1",
-            "base_model": "Qwen2.5-0.5B-Instruct",
+            "base_model": "Qwen3-0.6B",
             "language": "python",
             "skill": "code_generation",
             "dataset_path": "/tmp/ds.jsonl",

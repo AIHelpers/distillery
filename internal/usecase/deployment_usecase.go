@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -199,6 +200,132 @@ func (u *DeploymentUsecase) Export(taskID string) (data []byte, filename string,
 	}
 
 	return u.exporter.BuildExport(task, job)
+}
+
+// ExportGGUF converts the task's latest completed model to GGUF format
+// (HomeBred-LLM / llama.cpp compatible) and returns the file bytes + download name.
+func (u *DeploymentUsecase) ExportGGUF(taskID string, opts domain.GGUFExportOptions) ([]byte, string, error) {
+	task, err := u.tasks.Get(taskID)
+	if err != nil {
+		return nil, "", err
+	}
+
+	job, err := u.jobs.LatestCompleted(taskID)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return u.exportGGUF(task, job, opts)
+}
+
+// ExportGGUFVersion converts a specific completed job version to GGUF.
+func (u *DeploymentUsecase) ExportGGUFVersion(taskID, jobID string, opts domain.GGUFExportOptions) ([]byte, string, error) {
+	task, err := u.tasks.Get(taskID)
+	if err != nil {
+		return nil, "", err
+	}
+
+	job, err := u.jobs.Get(jobID)
+	if err != nil {
+		return nil, "", err
+	}
+
+	if job.TaskID != taskID {
+		return nil, "", domain.ErrNotFound
+	}
+
+	return u.exportGGUF(task, job, opts)
+}
+
+// exportGGUF routes to the configured GGUF exporter, guarding for the case
+// where the configured exporter does not implement domain.GGUFExporter.
+func (u *DeploymentUsecase) exportGGUF(task *domain.Task, job *domain.TrainingJob, opts domain.GGUFExportOptions) ([]byte, string, error) {
+	if job.Status != domain.TrainingCompleted {
+		return nil, "", domain.ErrNoModel
+	}
+
+	ggufExporter, ok := u.exporter.(domain.GGUFExporter)
+	if !ok || ggufExporter == nil {
+		return nil, "", errors.New("configured exporter does not support GGUF conversion")
+	}
+
+	return ggufExporter.BuildGGUF(task, job, opts)
+}
+
+// StartGGUFAsync starts an async GGUF conversion and returns a session ID
+// for polling progress. If the exporter doesn't support async conversion,
+// it returns an error.
+func (u *DeploymentUsecase) StartGGUFAsync(taskID, jobID, sessionID string, opts domain.GGUFExportOptions) error {
+	task, err := u.tasks.Get(taskID)
+	if err != nil {
+		return err
+	}
+
+	var job *domain.TrainingJob
+	if jobID == "" {
+		job, err = u.jobs.LatestCompleted(taskID)
+	} else {
+		job, err = u.jobs.Get(jobID)
+		if err == nil && job.TaskID != taskID {
+			err = domain.ErrNotFound
+		}
+	}
+
+	if err != nil {
+		return err
+	}
+
+	if job.Status != domain.TrainingCompleted {
+		return domain.ErrNoModel
+	}
+
+	asyncExporter, ok := u.exporter.(domain.AsyncGGUFExporter)
+	if !ok || asyncExporter == nil {
+		return errors.New("configured exporter does not support async GGUF conversion")
+	}
+
+	asyncExporter.StartGGUFAsync(sessionID, taskID, jobID, task, job, opts)
+
+	return nil
+}
+
+// GetGGUFProgress returns the progress for an async GGUF session.
+func (u *DeploymentUsecase) GetGGUFProgress(sessionID string) (*domain.GGUFProgressInfo, error) {
+	asyncExporter, ok := u.exporter.(domain.AsyncGGUFExporter)
+	if !ok || asyncExporter == nil {
+		return nil, errors.New("async GGUF not available")
+	}
+
+	p := asyncExporter.GetGGUFProgress(sessionID)
+	if p == nil {
+		return nil, domain.ErrNotFound
+	}
+
+	return p, nil
+}
+
+// GetGGUFResult returns the file path and filename for a ready session.
+// The caller streams the file directly from disk — it is never loaded
+// into memory.
+func (u *DeploymentUsecase) GetGGUFResult(sessionID string) (string, string, error) {
+	asyncExporter, ok := u.exporter.(domain.AsyncGGUFExporter)
+	if !ok || asyncExporter == nil {
+		return "", "", errors.New("async GGUF not available")
+	}
+
+	return asyncExporter.GetGGUFResult(sessionID)
+}
+
+// CleanupGGUFSession deletes the converted GGUF file from disk and removes
+// the session from the progress store. Called after the file has been
+// streamed to the client so large GGUF files don't accumulate.
+func (u *DeploymentUsecase) CleanupGGUFSession(sessionID string) {
+	asyncExporter, ok := u.exporter.(domain.AsyncGGUFExporter)
+	if !ok || asyncExporter == nil {
+		return
+	}
+
+	asyncExporter.CleanupGGUFSession(sessionID)
 }
 
 // --- unexported helpers ---.

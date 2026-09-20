@@ -4,19 +4,107 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"distillery/internal/domain"
 )
 
-// Exporter implements domain.Exporter. It builds a "run anywhere" export
-// package: a manifest, a self-host Dockerfile (vLLM/TGI serving image spec),
-// and a placeholder weights file, as a downloadable zip. This is the
-// no-lock-in wedge called out in the product spec.
-type Exporter struct{}
+// errGGUFNotConfigured is returned when BuildGGUF is called on an Exporter
+// with no real production converter wired up. It tells the user how to get a
+// real, full-size GGUF instead of fabricating a worthless pseudo-random one.
+var errGGUFNotConfigured = errors.New(
+	"GGUF export is not configured for this backend. Run the server with " +
+		"TRAINING_BACKEND=local (needs an NVIDIA GPU + pip install -r " +
+		"trainer/requirements.txt) so a real, full-size GGUF can be produced " +
+		"from trained weights, then re-export",
+)
 
+// Exporter implements domain.Exporter and domain.GGUFExporter. It builds a
+// "run anywhere" export package: a manifest, a self-host Dockerfile
+// (vLLM/TGI serving image spec), and a placeholder weights file, as a
+// downloadable zip. This is the no-lock-in wedge called out in the product
+// spec.
+//
+// GGUF export is delegated to a real production converter
+// (domain.GGUFExporter, e.g. the local training backend's converter) when
+// one is configured. When no trained adapter or merged model exists on disk
+// (the normal simulation case), the converter falls back to converting the
+// base model itself — so the user still gets a real, full-size, loadable
+// GGUF rather than a fake pseudo-random file.
+type Exporter struct {
+	// ggufExporter is the optional real GGUF converter used by BuildGGUF.
+	// When nil, BuildGGUF returns a clear error explaining that no converter
+	// is wired up.
+	ggufExporter domain.GGUFExporter
+}
+
+// NewExporter creates a simulation exporter with no GGUF converter wired up.
+// Use NewExporterWithGGUF to inject a real converter.
 func NewExporter() *Exporter { return &Exporter{} }
+
+// NewExporterWithGGUF creates a simulation exporter that delegates GGUF
+// export to the supplied real converter (typically a
+// training.LocalExporter). This lets the simulation backend serve real GGUF
+// files produced from actual trained weights on disk instead of a fake
+// placeholder.
+func NewExporterWithGGUF(ggufExporter domain.GGUFExporter) *Exporter {
+	return &Exporter{ggufExporter: ggufExporter}
+}
+
+// BuildGGUF implements domain.GGUFExporter. It delegates to the configured
+// real production converter. When no converter is wired up, it fails fast
+// with an actionable message rather than fabricating a worthless
+// pseudo-random GGUF. When a converter is wired up but no trained weights
+// exist on disk, the converter falls back to base-model conversion.
+func (e *Exporter) BuildGGUF(task *domain.Task, job *domain.TrainingJob, opts domain.GGUFExportOptions) ([]byte, string, error) {
+	if job.Status != domain.TrainingCompleted {
+		return nil, "", domain.ErrNoModel
+	}
+
+	if e.ggufExporter == nil {
+		return nil, "", errGGUFNotConfigured
+	}
+
+	// Delegate to the real production converter. When no trained adapter
+	// or merged model exists on disk (the normal simulation case), the
+	// converter falls back to converting the base model itself — so the
+	// user gets a real, full-size, loadable GGUF rather than a fake file.
+	return e.ggufExporter.BuildGGUF(task, job, opts)
+}
+
+// StartGGUFAsync forwards to the wrapped converter's async conversion.
+func (e *Exporter) StartGGUFAsync(sessionID, taskID, jobID string, task *domain.Task, job *domain.TrainingJob, opts domain.GGUFExportOptions) {
+	if asyncExp, ok := e.ggufExporter.(domain.AsyncGGUFExporter); ok {
+		asyncExp.StartGGUFAsync(sessionID, taskID, jobID, task, job, opts)
+	}
+}
+
+// GetGGUFProgress forwards to the wrapped converter's progress lookup.
+func (e *Exporter) GetGGUFProgress(sessionID string) *domain.GGUFProgressInfo {
+	if asyncExp, ok := e.ggufExporter.(domain.AsyncGGUFExporter); ok {
+		return asyncExp.GetGGUFProgress(sessionID)
+	}
+
+	return nil
+}
+
+// GetGGUFResult forwards to the wrapped converter's result retrieval.
+func (e *Exporter) GetGGUFResult(sessionID string) (string, string, error) {
+	if asyncExp, ok := e.ggufExporter.(domain.AsyncGGUFExporter); ok {
+		return asyncExp.GetGGUFResult(sessionID)
+	}
+
+	return "", "", errGGUFNotConfigured
+}
+
+// CleanupGGUFSession forwards to the wrapped converter's cleanup.
+func (e *Exporter) CleanupGGUFSession(sessionID string) {
+	if asyncExp, ok := e.ggufExporter.(domain.AsyncGGUFExporter); ok {
+		asyncExp.CleanupGGUFSession(sessionID)
+	}
+}
 
 func (e *Exporter) BuildExport(task *domain.Task, job *domain.TrainingJob) (data []byte, filename string, err error) {
 	if job.Status != domain.TrainingCompleted {
