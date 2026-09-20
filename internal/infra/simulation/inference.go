@@ -26,7 +26,9 @@ func (e *InferenceEngine) Predict(
 	inputTokens := tokenize(input)
 
 	var best *domain.Example
+
 	bestScore := -1.0
+
 	for _, ex := range trainingExamples {
 		score := jaccard(inputTokens, tokenize(ex.Input))
 		if score > bestScore {
@@ -34,6 +36,7 @@ func (e *InferenceEngine) Predict(
 			best = ex
 		}
 	}
+
 	if best == nil {
 		return "(unable to produce a prediction)", 0
 	}
@@ -44,18 +47,22 @@ func (e *InferenceEngine) Predict(
 	if job.Metrics != nil {
 		confidence = confidence*0.5 + job.Metrics.EvalAccuracy*0.5
 	}
+
 	if confidence > 0.99 {
 		confidence = 0.99
 	}
-	return best.Output, round2(confidence)
+
+	return best.Output, Round2(confidence)
 }
 
 func tokenize(s string) map[string]bool {
 	words := strings.Fields(strings.ToLower(s))
+
 	set := make(map[string]bool, len(words))
 	for _, w := range words {
 		set[strings.Trim(w, ".,!?;:\"'()")] = true
 	}
+
 	return set
 }
 
@@ -63,22 +70,29 @@ func jaccard(a, b map[string]bool) float64 {
 	if len(a) == 0 && len(b) == 0 {
 		return 1
 	}
+
 	inter := 0
+
 	seen := map[string]bool{}
 	for w := range a {
 		seen[w] = true
 	}
+
 	for w := range b {
 		seen[w] = true
 	}
+
 	union := len(seen)
+
 	for w := range a {
 		if b[w] {
 			inter++
 		}
 	}
+
 	if union == 0 {
 		return 0
 	}
+
 	return float64(inter) / float64(union)
 }

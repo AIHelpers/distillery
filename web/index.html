@@ -12,6 +12,11 @@
     <header class="topbar">
       <div class="brand"><img src="/static/logo.svg" alt="" class="brand-icon" /> Distillery</div>
       <div class="tagline">Task-to-Model Platform — define a task, get a model</div>
+      <nav class="subnav">
+        <a href="/" class="active">Tasks</a>
+        <a href="/agent.html">Agents</a>
+        <a href="/models.html">Models</a>
+      </nav>
     </header>
 
     <div class="layout">
@@ -24,7 +29,7 @@
       <main class="main" id="main">
         <div class="empty-state">
           <h2>Welcome to Distillery</h2>
-          <p>Create a task on the left to get started: describe what you need in plain English,
+          <p>Create a task on the left to get started: describe what you need,
              add a few example input/output pairs, and Distillery will curate a dataset,
              pick a right-sized base model, fine-tune it, and deploy it as an API — all with
              a portable "run anywhere" export so you're never locked in.</p>

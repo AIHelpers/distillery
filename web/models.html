@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Distillery — Models</title>
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    .model-table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    .model-table th, .model-table td { text-align: left; padding: 8px; border-bottom: 1px solid var(--charcoal-3); vertical-align: middle; }
+    .store-badge { padding: 3px 8px; border-radius: 8px; font-size: 12px; }
+    .badge-base { background: #2a6fb0; color: #fff; }
+    .badge-trained { background: #2a8a3a; color: #fff; }
+    .badge-local { background: #444; color: #fff; }
+    .badge-hf { background: #b0782a; color: #fff; }
+    .badge-s3 { background: #7a4ab0; color: #fff; }
+    .store-card { background: var(--charcoal); border: 1px solid var(--charcoal-3); padding: 12px; border-radius: 4px; margin-bottom: 16px; }
+    .section-title { margin-top: 28px; }
+    .flex-row { display: flex; flex-wrap: wrap; gap: 16px; }
+    .panel { background: var(--charcoal); border: 1px solid var(--charcoal-3); padding: 16px; border-radius: 4px; flex: 1 1 340px; }
+    .mono { font-family: var(--font-mono); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header class="topbar">
+      <div class="brand"><img src="/static/logo.svg" alt="" class="brand-icon" /> Distillery</div>
+      <div class="tagline">Model Stores & Transfer</div>
+      <nav class="subnav">
+        <a href="/">Tasks</a>
+        <a href="/agent.html">Agents</a>
+        <a href="/models.html" class="active">Models</a>
+      </nav>
+    </header>
+
+    <main class="main" style="padding: 20px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <h2 style="margin:0;">Configured Model Stores</h2>
+        <div>
+          <button class="btn" id="refresh-btn">Refresh</button>
+          <button class="btn primary" id="new-store-btn">+ New Store</button>
+        </div>
+      </div>
+
+      <div id="stores-container"></div>
+      <div id="models-container"></div>
+    </main>
+  </div>
+  <div id="modal-root"></div>
+
+  <script>
+    const API = "/api/v1";
+
+    // ---- Helpers ----
+    async function api(method, path, body) {
+      const opts = { method, headers: {} };
+      if (body !== undefined) { opts.headers["Content-Type"]="application/json"; opts.body=JSON.stringify(body); }
+      const res = await fetch(API+path, opts);
+      if (res.status === 204) return null;
+      const isJSON = (res.headers.get("content-type")||"").includes("application/json");
+      const data = isJSON ? await res.json() : null;
+      if (!res.ok) throw new Error((data && data.error) || "Request failed");
+      return data;
+    }
+
+    function escapeHtml(s){ const amp=String.fromCharCode(38), lt=String.fromCharCode(60), gt=String.fromCharCode(62), q=String.fromCharCode(34); return String(s||"").replace(new RegExp('['+amp+lt+gt+q+']','g'),function(c){ if(c===amp)return amp+'amp;'; if(c===lt)return amp+'lt;'; if(c===gt)return amp+'gt;'; return amp+'quot;'; }); }
+    function toast(msg, isError){ const el=document.createElement("div"); el.className="toast"+(isError?" error":""); el.textContent=msg; document.body.appendChild(el); setTimeout(()=>el.remove(),3500); }
+    function fmtBytes(n){ n = n||0; if (n < 1024) return n+" B"; const k=1024; const sizes=["KB","MB","GB","TB"]; let i=-1; do { n/=k; i++; } while (n>=k && i<sizes.length-1); return n.toFixed(1)+" "+sizes[i]; }
+    function badgeClass(type, kind){
+      const b = kind==="trained" ? "badge-trained" : "badge-base";
+      const t = type==="local" ? "badge-local" : (type==="huggingface" ? "badge-hf" : "badge-s3");
+      return b+" "+t;
+    }
+
+    // ---- Stores ----
+    async function loadStores() {
+      const stores = (await api("GET", "/model-stores")) || [];
+      const container = document.getElementById("stores-container");
+      if (stores.length === 0) {
+        container.innerHTML = '<p class="muted">No model stores configured yet. Add a store to manage base models for fine-tuning and trained model artifacts.</p>';
+        return;
+      }
+      let html = '<div class="flex-row">';
+      for (const s of stores) {
+        const cfg = s.config || {};
+        const desc = s.type==="local" ? cfg.path
+          : s.type==="huggingface" ? cfg.repo_id
+          : (cfg.bucket || "") + (cfg.endpoint ? " @ "+cfg.endpoint : "");
+        html += `
+        <div class="store-card">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <span class="store-badge ${badgeClass(s.type, s.kind)}">${s.kind} / ${s.type}</span>
+            <span class="mono">${s.enabled ? "enabled" : "disabled"}</span>
+          </div>
+          <h3 style="margin:8px 0 4px;">${escapeHtml(s.name)} <span class="mono" style="color:#888;">${escapeHtml(s.id)}</span></h3>
+          <div class="mono" style="color:#aaa;">${escapeHtml(desc||"")}</div>
+          <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+            ${s.kind==="base"
+              ? `<button class="btn" onclick="browseModels('${s.id}','base')">Browse Base Models</button>`
+              : `<button class="btn" onclick="browseModels('${s.id}','trained')">Browse Trained Models</button>`}
+            <button class="btn" onclick="showUploadModal('${s.id}','${s.kind}')">Upload</button>
+            ${s.enabled
+              ? `<button class="btn ghost" onclick="toggleStore('${s.id}',false)">Disable</button>`
+              : `<button class="btn ghost" onclick="toggleStore('${s.id}',true)">Enable</button>`}
+            <button class="btn ghost" onclick="deleteStore('${s.id}')">Delete</button>
+          </div>
+        </div>`;
+      }
+      html += '</div>';
+      container.innerHTML = html;
+    }
+
+    async function toggleStore(id, enabled) {
+      try { await api("PATCH", "/model-stores/"+id, { enabled }); toast("Store updated"); loadStores(); }
+      catch (e) { toast(e.message, true); }
+    }
+
+    async function deleteStore(id) {
+      if (!confirm("Delete this model store configuration?")) return;
+      try {
+        await api("DELETE", "/model-stores/"+id);
+        toast("Store deleted");
+        document.getElementById("models-container").innerHTML = "";
+        loadStores();
+      } catch (e) { toast(e.message, true); }
+    }
+
+    // ---- Browse / download ----
+    async function browseModels(storeID, kind) {
+      const container = document.getElementById("models-container");
+      container.innerHTML = '<p class="muted">Loading…</p>';
+      try {
+        const path = kind==="base" ? "/model-stores/"+storeID+"/models" : "/model-stores/"+storeID+"/trained";
+        const files = (await api("GET", path)) || [];
+        if (!files.length) {
+          container.innerHTML = '<p class="muted">No models in this store yet. Use Upload to push a local model directory here.</p>';
+          return;
+        }
+        let html = '<table class="model-table"><thead><tr><th>Name</th><th>Size</th><th>Kind</th><th>Base model</th><th>Actions</th></tr></thead><tbody>';
+        for (const f of files) {
+          const actions = kind==="base"
+            ? `<button class="btn" onclick="downloadModel('${storeID}','${escapeHtml(JSON.stringify(f))}')">Download</button>`
+            : '<span class="muted">—</span>';
+          html += `<tr>
+            <td class="mono">${escapeHtml(f.name)}</td>
+            <td>${f.is_dir ? "dir" : fmtBytes(f.size_bytes)}</td>
+            <td>${f.is_dir ? "directory" : "file"}</td>
+            <td>${escapeHtml(f.base_model||"")}</td>
+            <td>${actions}</td>
+          </tr>`;
+        }
+        html += '</tbody></table>';
+        container.innerHTML = html;
+      } catch (e) { container.innerHTML = '<p class="error">'+escapeHtml(e.message)+'</p>'; }
+    }
+
+    async function downloadModel(storeID, fileJson) {
+      const file = JSON.parse(fileJson);
+      try {
+        const res = await api("POST", "/model-stores/"+storeID+"/models/download", { file });
+        toast("Downloaded to "+res.local_path);
+      } catch (e) { toast(e.message, true); }
+    }
+
+    // ---- Upload (base + trained) ----
+    function showUploadModal(storeID, kind) {
+      const root = document.getElementById("modal-root");
+      root.innerHTML = `
+        <div class="modal-backdrop" id="modal-backdrop">
+          <div class="modal">
+            <h3>Upload ${kind==="base" ? "Base" : "Trained"} Model</h3>
+            <label>Local path (directory containing the model files)</label>
+            <input type="text" id="up-path" placeholder="/path/to/model-dir" />
+            <label>Artifact name</label>
+            <input type="text" id="up-name" placeholder="my-custom-model-v1" />
+            ${kind==="trained" ? '<label>Base model (optional)</label><input type="text" id="up-base" placeholder="gpt2" />' : ""}
+            <div class="modal-actions">
+              <button class="btn ghost" id="up-cancel">Cancel</button>
+              <button class="btn primary" id="up-do">Upload</button>
+            </div>
+          </div>
+        </div>`;
+      document.getElementById("up-cancel").onclick = () => root.innerHTML="";
+      document.getElementById("modal-backdrop").onclick = (e)=>{ if(e.target.id==="modal-backdrop") root.innerHTML=""; };
+      document.getElementById("up-do").onclick = async () => {
+        const localPath = document.getElementById("up-path").value.trim();
+        const artifactName = document.getElementById("up-name").value.trim();
+        if (!localPath || !artifactName) { toast("Path and artifact name are required", true); return; }
+        const baseModel = kind==="trained" ? (document.getElementById("up-base").value.trim()||"") : "";
+        try {
+          const path = kind==="base"
+            ? "/model-stores/"+storeID+"/models/upload"
+            : "/model-stores/"+storeID+"/trained/upload";
+          await api("POST", path, { local_path: localPath, artifact_name: artifactName, base_model: baseModel });
+          root.innerHTML="";
+          toast("Upload complete");
+          browseModels(storeID, kind);
+        } catch (e) { toast(e.message, true); }
+      };
+    }
+
+    // ---- New store modal ----
+    function showNewStoreModal() {
+      const root = document.getElementById("modal-root");
+      root.innerHTML = `
+        <div class="modal-backdrop" id="modal-backdrop">
+          <div class="modal">
+            <h3>New Model Store</h3>
+            <label>Name</label>
+            <input type="text" id="ns-name" placeholder="e.g. Local base models" />
+            <label>Kind</label>
+            <select id="ns-kind">
+              <option value="base">Base models (for fine-tuning)</option>
+              <option value="trained">Trained models (fine-tuned artifacts)</option>
+            </select>
+            <label>Backend type</label>
+            <select id="ns-type">
+              <option value="local">Local directory</option>
+              <option value="huggingface">HuggingFace Hub</option>
+              <option value="s3">S3-compatible bucket</option>
+            </select>
+            <div id="ns-config"></div>
+            <div class="modal-actions">
+              <button class="btn ghost" id="ns-cancel">Cancel</button>
+              <button class="btn primary" id="ns-create">Create Store</button>
+            </div>
+          </div>
+        </div>`;
+
+      const renderConfig = () => {
+        const type = document.getElementById("ns-type").value;
+        const box = document.getElementById("ns-config");
+        if (type === "local") {
+          box.innerHTML = '<label>Directory path</label><input type="text" id="ns-path" placeholder="/path/to/models" />';
+        } else if (type === "huggingface") {
+          box.innerHTML = `
+            <label>Repo ID (org/repo)</label><input type="text" id="ns-repo" placeholder="org/model-name" />
+            <label>Token (optional, for private repos or uploads)</label><input type="text" id="ns-token" placeholder="hf_xxx" />
+            <label>Cache dir (optional)</label><input type="text" id="ns-cache" placeholder="/path/to/hf-cache" />`;
+        } else {
+          box.innerHTML = `
+            <label>Bucket</label><input type="text" id="ns-bucket" placeholder="my-models" />
+            <label>Endpoint (optional, for MinIO etc.)</label><input type="text" id="ns-endpoint" placeholder="https://s3.local:9000" />
+            <label>Region (optional)</label><input type="text" id="ns-region" placeholder="us-east-1" />
+            <label>Access key (optional)</label><input type="text" id="ns-access" />
+            <label>Secret key (optional)</label><input type="text" id="ns-secret" />`;
+        }
+      };
+
+      document.getElementById("ns-kind").onchange = renderConfig;
+      document.getElementById("ns-type").onchange = renderConfig;
+      document.getElementById("ns-cancel").onclick = () => root.innerHTML="";
+      document.getElementById("modal-backdrop").onclick = (e)=>{ if(e.target.id==="modal-backdrop") root.innerHTML=""; };
+      renderConfig();
+
+      document.getElementById("ns-create").onclick = async () => {
+        const name = document.getElementById("ns-name").value.trim();
+        const kind = document.getElementById("ns-kind").value;
+        const type = document.getElementById("ns-type").value;
+        if (!name) { toast("Name is required", true); return; }
+        let config = {};
+        if (type === "local") {
+          config = { path: document.getElementById("ns-path").value.trim() };
+        } else if (type === "huggingface") {
+          config = {
+            repo_id: document.getElementById("ns-repo").value.trim(),
+            token: document.getElementById("ns-token").value.trim(),
+            cache_dir: document.getElementById("ns-cache").value.trim(),
+          };
+        } else {
+          config = {
+            bucket: document.getElementById("ns-bucket").value.trim(),
+            endpoint: document.getElementById("ns-endpoint").value.trim(),
+            region: document.getElementById("ns-region").value.trim(),
+            access_key: document.getElementById("ns-access").value.trim(),
+            secret_key: document.getElementById("ns-secret").value.trim(),
+          };
+        }
+        try {
+          await api("POST", "/model-stores", { name, kind, type, config });
+          root.innerHTML="";
+          toast("Model store created");
+          loadStores();
+        } catch (e) { toast(e.message, true); }
+      };
+    }
+
+    document.getElementById("refresh-btn").onclick = () => { loadStores(); };
+    document.getElementById("new-store-btn").onclick = showNewStoreModal;
+    loadStores();
+    setInterval(loadStores, 10000);
+  </script>
+</body>
+</html>

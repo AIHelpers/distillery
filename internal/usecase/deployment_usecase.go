@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -47,62 +48,37 @@ func NewDeploymentUsecase(
 // It returns the deployment plus the raw API key — the key is only ever
 // available at this moment; only its hash is persisted.
 func (u *DeploymentUsecase) Deploy(taskID string, autoscale bool) (*domain.Deployment, string, error) {
-	if _, err := u.tasks.Get(taskID); err != nil {
+	_, err := u.tasks.Get(taskID)
+	if err != nil {
 		return nil, "", err
 	}
+
 	job, err := u.jobs.LatestCompleted(taskID)
 	if err != nil {
 		return nil, "", err
 	}
+
 	return u.deployJob(taskID, job, autoscale)
 }
 
 // DeployVersion deploys a specific (completed) training job version for the
 // task, enabling model comparison and rollback to an earlier fine-tune.
 func (u *DeploymentUsecase) DeployVersion(taskID, jobID string, autoscale bool) (*domain.Deployment, string, error) {
-	if _, err := u.tasks.Get(taskID); err != nil {
+	_, err := u.tasks.Get(taskID)
+	if err != nil {
 		return nil, "", err
 	}
+
 	job, err := u.jobs.Get(jobID)
 	if err != nil {
 		return nil, "", err
 	}
+
 	if job.TaskID != taskID || job.Status != domain.TrainingCompleted {
 		return nil, "", domain.ErrNoModel
 	}
+
 	return u.deployJob(taskID, job, autoscale)
-}
-
-func (u *DeploymentUsecase) deployJob(
-	taskID string,
-	job *domain.TrainingJob,
-	autoscale bool,
-) (*domain.Deployment, string, error) {
-	// Stop any currently active deployment for this task before deploying anew.
-	if active, err := u.deployments.GetActiveForTask(taskID); err == nil {
-		active.Status = domain.DeploymentStopped
-		_ = u.deployments.Update(active)
-	}
-
-	id := u.idGen.NewID("dep")
-	rawKey, keyHash, err := generateAPIKey()
-	if err != nil {
-		return nil, "", err
-	}
-	d := &domain.Deployment{
-		ID:            id,
-		TaskID:        taskID,
-		TrainingJobID: job.ID,
-		Endpoint:      fmt.Sprintf("/api/v1/inference/%s/predict", id),
-		Autoscale:     autoscale,
-		Status:        domain.DeploymentActive,
-		APIKeyHash:    keyHash,
-		CreatedAt:     time.Now().UTC(),
-	}
-	if err := u.deployments.Create(d); err != nil {
-		return nil, "", err
-	}
-	return d, rawKey, nil
 }
 
 func (u *DeploymentUsecase) GetActiveDeployment(taskID string) (*domain.Deployment, error) {
@@ -118,34 +94,10 @@ func (u *DeploymentUsecase) StopDeployment(id string) error {
 	if err != nil {
 		return err
 	}
+
 	d.Status = domain.DeploymentStopped
+
 	return u.deployments.Update(d)
-}
-
-// authorize checks the presented raw API key against the deployment's
-// stored hash using a constant-time comparison.
-func (u *DeploymentUsecase) authorize(d *domain.Deployment, apiKey string) error {
-	if apiKey == "" || d.APIKeyHash == "" {
-		return domain.ErrUnauthorized
-	}
-	if subtle.ConstantTimeCompare([]byte(hashAPIKey(apiKey)), []byte(d.APIKeyHash)) != 1 {
-		return domain.ErrUnauthorized
-	}
-	return nil
-}
-
-func (u *DeploymentUsecase) usableExamples(taskID string) ([]*domain.Example, error) {
-	examples, err := u.examples.ListByTask(taskID)
-	if err != nil {
-		return nil, err
-	}
-	var usable []*domain.Example
-	for _, e := range examples {
-		if !e.Duplicate && !e.Flagged {
-			usable = append(usable, e)
-		}
-	}
-	return usable, nil
 }
 
 // Invoke calls the deployed endpoint by ID with a raw input string,
@@ -155,20 +107,26 @@ func (u *DeploymentUsecase) Invoke(deploymentID, apiKey, input string) (output s
 	if err != nil {
 		return "", 0, err
 	}
-	if err := u.authorize(d, apiKey); err != nil {
+
+	err = u.authorize(d, apiKey)
+	if err != nil {
 		return "", 0, err
 	}
+
 	if d.Status != domain.DeploymentActive {
 		return "", 0, domain.ErrNoDeployment
 	}
+
 	job, err := u.jobs.Get(d.TrainingJobID)
 	if err != nil {
 		return "", 0, err
 	}
+
 	usable, err := u.usableExamples(d.TaskID)
 	if err != nil {
 		return "", 0, err
 	}
+
 	output, confidence = u.engine.Predict(job, usable, input)
 
 	d.RequestCount++
@@ -191,16 +149,21 @@ func (u *DeploymentUsecase) InvokeBatch(deploymentID, apiKey string, inputs []st
 	if err != nil {
 		return nil, err
 	}
-	if err := u.authorize(d, apiKey); err != nil {
+
+	err = u.authorize(d, apiKey)
+	if err != nil {
 		return nil, err
 	}
+
 	if d.Status != domain.DeploymentActive {
 		return nil, domain.ErrNoDeployment
 	}
+
 	job, err := u.jobs.Get(d.TrainingJobID)
 	if err != nil {
 		return nil, err
 	}
+
 	usable, err := u.usableExamples(d.TaskID)
 	if err != nil {
 		return nil, err
@@ -212,6 +175,7 @@ func (u *DeploymentUsecase) InvokeBatch(deploymentID, apiKey string, inputs []st
 		if in == "" {
 			continue
 		}
+
 		out, conf := u.engine.Predict(job, usable, in)
 		results = append(results, BatchResult{Input: in, Output: out, Confidence: conf})
 	}
@@ -229,19 +193,222 @@ func (u *DeploymentUsecase) Export(taskID string) (data []byte, filename string,
 	if err != nil {
 		return nil, "", err
 	}
+
 	job, err := u.jobs.LatestCompleted(taskID)
 	if err != nil {
 		return nil, "", err
 	}
+
 	return u.exporter.BuildExport(task, job)
+}
+
+// ExportGGUF converts the task's latest completed model to GGUF format
+// (HomeBred-LLM / llama.cpp compatible) and returns the file bytes + download name.
+func (u *DeploymentUsecase) ExportGGUF(taskID string, opts domain.GGUFExportOptions) ([]byte, string, error) {
+	task, err := u.tasks.Get(taskID)
+	if err != nil {
+		return nil, "", err
+	}
+
+	job, err := u.jobs.LatestCompleted(taskID)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return u.exportGGUF(task, job, opts)
+}
+
+// ExportGGUFVersion converts a specific completed job version to GGUF.
+func (u *DeploymentUsecase) ExportGGUFVersion(taskID, jobID string, opts domain.GGUFExportOptions) ([]byte, string, error) {
+	task, err := u.tasks.Get(taskID)
+	if err != nil {
+		return nil, "", err
+	}
+
+	job, err := u.jobs.Get(jobID)
+	if err != nil {
+		return nil, "", err
+	}
+
+	if job.TaskID != taskID {
+		return nil, "", domain.ErrNotFound
+	}
+
+	return u.exportGGUF(task, job, opts)
+}
+
+// exportGGUF routes to the configured GGUF exporter, guarding for the case
+// where the configured exporter does not implement domain.GGUFExporter.
+func (u *DeploymentUsecase) exportGGUF(task *domain.Task, job *domain.TrainingJob, opts domain.GGUFExportOptions) ([]byte, string, error) {
+	if job.Status != domain.TrainingCompleted {
+		return nil, "", domain.ErrNoModel
+	}
+
+	ggufExporter, ok := u.exporter.(domain.GGUFExporter)
+	if !ok || ggufExporter == nil {
+		return nil, "", errors.New("configured exporter does not support GGUF conversion")
+	}
+
+	return ggufExporter.BuildGGUF(task, job, opts)
+}
+
+// StartGGUFAsync starts an async GGUF conversion and returns a session ID
+// for polling progress. If the exporter doesn't support async conversion,
+// it returns an error.
+func (u *DeploymentUsecase) StartGGUFAsync(taskID, jobID, sessionID string, opts domain.GGUFExportOptions) error {
+	task, err := u.tasks.Get(taskID)
+	if err != nil {
+		return err
+	}
+
+	var job *domain.TrainingJob
+	if jobID == "" {
+		job, err = u.jobs.LatestCompleted(taskID)
+	} else {
+		job, err = u.jobs.Get(jobID)
+		if err == nil && job.TaskID != taskID {
+			err = domain.ErrNotFound
+		}
+	}
+
+	if err != nil {
+		return err
+	}
+
+	if job.Status != domain.TrainingCompleted {
+		return domain.ErrNoModel
+	}
+
+	asyncExporter, ok := u.exporter.(domain.AsyncGGUFExporter)
+	if !ok || asyncExporter == nil {
+		return errors.New("configured exporter does not support async GGUF conversion")
+	}
+
+	asyncExporter.StartGGUFAsync(sessionID, taskID, jobID, task, job, opts)
+
+	return nil
+}
+
+// GetGGUFProgress returns the progress for an async GGUF session.
+func (u *DeploymentUsecase) GetGGUFProgress(sessionID string) (*domain.GGUFProgressInfo, error) {
+	asyncExporter, ok := u.exporter.(domain.AsyncGGUFExporter)
+	if !ok || asyncExporter == nil {
+		return nil, errors.New("async GGUF not available")
+	}
+
+	p := asyncExporter.GetGGUFProgress(sessionID)
+	if p == nil {
+		return nil, domain.ErrNotFound
+	}
+
+	return p, nil
+}
+
+// GetGGUFResult returns the file path and filename for a ready session.
+// The caller streams the file directly from disk — it is never loaded
+// into memory.
+func (u *DeploymentUsecase) GetGGUFResult(sessionID string) (string, string, error) {
+	asyncExporter, ok := u.exporter.(domain.AsyncGGUFExporter)
+	if !ok || asyncExporter == nil {
+		return "", "", errors.New("async GGUF not available")
+	}
+
+	return asyncExporter.GetGGUFResult(sessionID)
+}
+
+// CleanupGGUFSession deletes the converted GGUF file from disk and removes
+// the session from the progress store. Called after the file has been
+// streamed to the client so large GGUF files don't accumulate.
+func (u *DeploymentUsecase) CleanupGGUFSession(sessionID string) {
+	asyncExporter, ok := u.exporter.(domain.AsyncGGUFExporter)
+	if !ok || asyncExporter == nil {
+		return
+	}
+
+	asyncExporter.CleanupGGUFSession(sessionID)
+}
+
+// --- unexported helpers ---.
+
+func (u *DeploymentUsecase) deployJob(
+	taskID string,
+	job *domain.TrainingJob,
+	autoscale bool,
+) (*domain.Deployment, string, error) {
+	// Stop any currently active deployment for this task before deploying anew.
+	active, err := u.deployments.GetActiveForTask(taskID)
+	if err == nil {
+		active.Status = domain.DeploymentStopped
+		_ = u.deployments.Update(active)
+	}
+
+	id := u.idGen.NewID("dep")
+
+	rawKey, keyHash, err := generateAPIKey()
+	if err != nil {
+		return nil, "", err
+	}
+
+	d := &domain.Deployment{
+		ID:            id,
+		TaskID:        taskID,
+		TrainingJobID: job.ID,
+		Endpoint:      fmt.Sprintf("/api/v1/inference/%s/predict", id),
+		Autoscale:     autoscale,
+		Status:        domain.DeploymentActive,
+		APIKeyHash:    keyHash,
+		CreatedAt:     time.Now().UTC(), RequestCount: 0,
+	}
+
+	err = u.deployments.Create(d)
+	if err != nil {
+		return nil, "", err
+	}
+
+	return d, rawKey, nil
+}
+
+// authorize checks the presented raw API key against the deployment's
+// stored hash using a constant-time comparison.
+func (u *DeploymentUsecase) authorize(d *domain.Deployment, apiKey string) error {
+	if apiKey == "" || d.APIKeyHash == "" {
+		return domain.ErrUnauthorized
+	}
+
+	if subtle.ConstantTimeCompare([]byte(hashAPIKey(apiKey)), []byte(d.APIKeyHash)) != 1 {
+		return domain.ErrUnauthorized
+	}
+
+	return nil
+}
+
+func (u *DeploymentUsecase) usableExamples(taskID string) ([]*domain.Example, error) {
+	examples, err := u.examples.ListByTask(taskID)
+	if err != nil {
+		return nil, err
+	}
+
+	var usable []*domain.Example
+
+	for _, e := range examples {
+		if !e.Duplicate && !e.Flagged {
+			usable = append(usable, e)
+		}
+	}
+
+	return usable, nil
 }
 
 func generateAPIKey() (raw, hash string, err error) {
 	b := make([]byte, 24)
-	if _, err = rand.Read(b); err != nil {
+
+	_, err = rand.Read(b)
+	if err != nil {
 		return "", "", err
 	}
+
 	raw = "sk_" + hex.EncodeToString(b)
+
 	return raw, hashAPIKey(raw), nil
 }
 

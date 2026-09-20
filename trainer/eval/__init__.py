@@ -1,0 +1,1 @@
+"""Real post-training quality validation (syntax validators, sandboxed execution)."""

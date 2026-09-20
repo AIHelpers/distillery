@@ -17,6 +17,12 @@ type BaseModel struct {
 	Name           string  `json:"name"`
 	ParamsBillions float64 `json:"params_billions"`
 	Family         string  `json:"family"`
+	// RepoID is the HuggingFace repo identifier (used by the local trainer).
+	RepoID string `json:"repo_id,omitempty"`
+	// MinVRAMGB is the minimum GPU VRAM (GiB) recommended to run this model with QLoRA.
+	MinVRAMGB float64 `json:"min_vram_gb,omitempty"`
+	// RecommendedQuant is the default quantization level, e.g. "4bit-nf4".
+	RecommendedQuant string `json:"recommended_quant,omitempty"`
 }
 
 // TrainingMetrics are the (simulated) results of a LoRA/QLoRA fine-tune run.
@@ -48,12 +54,16 @@ type TrainingJobRepository interface {
 	Get(id string) (*TrainingJob, error)
 	ListByTask(taskID string) ([]*TrainingJob, error)
 	Update(j *TrainingJob) error
+	Delete(id string) error
 	LatestCompleted(taskID string) (*TrainingJob, error)
 }
 
 // ModelSelector chooses a base model for a task based on dataset complexity.
 type ModelSelector interface {
 	SelectBaseModel(task *Task, exampleCount int, avgInputLen, avgOutputLen int) BaseModel
+	// ListBaseModels returns the curated catalog of available base models
+	// the user can choose from.
+	ListBaseModels() []BaseModel
 }
 
 // FineTuner runs (or simulates) a LoRA/QLoRA fine-tuning job asynchronously,
