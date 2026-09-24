@@ -15,7 +15,7 @@ func newTestModelStore(id, name string, kind domain.ModelStoreKind) *domain.Mode
 		Name:      name,
 		Type:      domain.ModelStoreLocal,
 		Kind:      kind,
-		Config:    domain.ModelStoreConfig{Path: "/tmp/models"},
+		Config:    domain.ModelStoreConfig{Path: "/tmp/models", RepoID: "", Token: "", CacheDir: "", Endpoint: "", Bucket: "", Region: "", AccessKey: "", SecretKey: ""},
 		Enabled:   true,
 		CreatedAt: time.Now().UTC(),
 	}

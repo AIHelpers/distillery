@@ -23,7 +23,7 @@ func (h *TaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	t, err := h.uc.CreateTask(req.Name, req.Description, domain.TaskType(req.Type))
+	t, err := h.uc.CreateTask(req.Name, req.Description, domain.TaskType(req.Type), domain.ModelKind(req.Kind))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

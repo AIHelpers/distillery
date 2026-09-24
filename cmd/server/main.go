@@ -22,6 +22,7 @@ import (
 	"distillery/internal/exhaustruct"
 	infraagent "distillery/internal/infra/agent"
 	"distillery/internal/infra/modelstore"
+	"distillery/internal/infra/serving"
 	"distillery/internal/infra/simulation"
 	localtraining "distillery/internal/infra/training"
 	"distillery/internal/repository/memory"
@@ -102,7 +103,21 @@ func main() {
 		exporter = simulation.NewExporterWithGGUF(ggufConverter)
 	}
 
-	inferenceEngine := simulation.NewInferenceEngine()
+	// INFERENCE_BACKEND selects how deployments serve predictions:
+	//   "simulation" → nearest-neighbour demo engine (default; no GPU)
+	//   "llamacpp"   → real llama-server process per trained GGUF
+	inferenceBackend := envOr("INFERENCE_BACKEND", "simulation")
+
+	var inferenceEngine domain.InferenceEngine
+	if inferenceBackend == "llamacpp" {
+		inferenceEngine = serving.NewLlamacppEngine(&serving.LlamacppConfig{
+			Bin:     envOr("LLAMACPP_BIN", "llama-server"),
+			JobsDir: envOr("TRAINING_OUTPUT_DIR", "./data/training"),
+			Backend: "llamacpp",
+		})
+	} else {
+		inferenceEngine = simulation.NewInferenceEngine()
+	}
 
 	idGen := usecase.NewRandomIDGenerator()
 

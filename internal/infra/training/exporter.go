@@ -505,6 +505,7 @@ func (e *LocalExporter) runGGUFAsync(sessionID string, task *domain.Task, job *d
 			File      string `json:"file"`
 			SizeBytes int64  `json:"size_bytes"`
 		}
+
 		err := json.Unmarshal(line, &event)
 		if err != nil {
 			continue

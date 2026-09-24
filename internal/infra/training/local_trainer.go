@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -208,7 +209,7 @@ func (l *LocalTrainer) AddActiveJob(jobID string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	l.active[&trainingProcess{job: &domain.TrainingJob{ID: jobID}}] = true
+	l.active[&trainingProcess{job: &domain.TrainingJob{ID: jobID, TaskID: "", Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Status: "", Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil}}] = true
 }
 
 // GCOldJobs runs the retention GC once (test helper).
@@ -285,6 +286,7 @@ func (l *LocalTrainer) runJob(
 	// Launch subprocess.
 	args := []string{
 		"-m", "trainer.run",
+		"--kind", string(job.Kind),
 		"--job-dir", jobDir,
 		"--config", filepath.Join(jobDir, "config.json"),
 		"--dataset", filepath.Join(jobDir, "dataset.jsonl"),
@@ -393,12 +395,28 @@ func (l *LocalTrainer) readMetrics(ctx context.Context, jobDir string, runErr er
 	}
 
 	var m struct {
-		Status  string  `json:"status"`
-		Loss    float64 `json:"eval_loss"`
-		Epochs  int     `json:"epoch"`
-		Steps   int     `json:"global_step"`
-		Best    string  `json:"best_checkpoint"`
-		TookSec float64 `json:"train_runtime"`
+		Status string  `json:"status"`
+		Loss   float64 `json:"eval_loss"`
+		// Python writes a fractional epoch (e.g. 3.75); an int field would
+		// fail to unmarshal and mark the whole run "malformed".
+		Epochs     float64                           `json:"epoch"`
+		Train      int                               `json:"train_examples"`
+		Steps      int                               `json:"global_step"`
+		Best       string                            `json:"best_checkpoint"`
+		TookSec    float64                           `json:"train_runtime"`
+		Kind       string                            `json:"kind"`
+		Accuracy   float64                           `json:"accuracy"`
+		MacroF1    float64                           `json:"macro_f1"`
+		WeightedF1 float64                           `json:"weighted_f1"`
+		BaselineF1 float64                           `json:"baseline_macro_f1"`
+		DeltaF1    float64                           `json:"delta_macro_f1"`
+		Threshold  float64                           `json:"default_threshold"`
+		MaxLength  int                               `json:"max_length"`
+		MultiLabel bool                              `json:"multi_label"`
+		PerClass   map[string]domain.PerClassMetrics `json:"per_class"`
+		ConfMatrix domain.ConfusionMatrix            `json:"confusion_matrix"`
+		LabelMap   map[string]int                    `json:"label_map"`
+		Thresholds []domain.ThresholdSweepPoint      `json:"threshold_sweep"`
 	}
 
 	err = json.Unmarshal(data, &m)
@@ -412,9 +430,22 @@ func (l *LocalTrainer) readMetrics(ctx context.Context, jobDir string, runErr er
 
 	return &domain.TrainingMetrics{
 		FinalLoss:     m.Loss,
-		EvalAccuracy:  0, // computed by the evaluator later.
-		Epochs:        m.Epochs,
-		TrainExamples: 0,
+		EvalAccuracy:  m.Accuracy,
+		Epochs:        int(math.Round(m.Epochs)),
+		TrainExamples: m.Train,
+		// Classifier fields propagate so the UI can render the confusion
+		// matrix, per-class table, and baseline comparison.
+		MacroF1:          m.MacroF1,
+		WeightedF1:       m.WeightedF1,
+		BaselineMacroF1:  m.BaselineF1,
+		DeltaMacroF1:     m.DeltaF1,
+		PerClass:         m.PerClass,
+		ConfusionMatrix:  m.ConfMatrix,
+		ThresholdSweep:   m.Thresholds,
+		LabelMap:         m.LabelMap,
+		DefaultThreshold: m.Threshold,
+		MaxLength:        m.MaxLength,
+		MultiLabel:       m.MultiLabel,
 	}, nil
 }
 
@@ -541,13 +572,36 @@ func (l *LocalTrainer) writeJobConfig(
 ) error {
 	_ = examples
 
+	kind := job.Kind
+	if kind == "" {
+		kind = domain.DefaultModelKind
+	}
+
 	cfg := map[string]interface{}{
 		"job_id":       job.ID,
+		"kind":         string(kind),
 		"base_model":   job.BaseModel.RepoID,
 		"language":     "python",
 		"skill":        "code_generation",
 		"dataset_path": filepath.Join(jobDir, "dataset.jsonl"),
 		"output_dir":   jobDir,
+	}
+
+	// Pass classifier hyperparameters through to the worker when present.
+	if job.Classifier != nil {
+		cfg["max_length"] = job.Classifier.MaxLength
+		cfg["multi_label"] = job.Classifier.MultiLabel
+		// Only pass class_weights when enabled: writing the Go zero value
+		// (false) would silently disable imbalance handling, whose Python
+		// default is on.
+		if job.Classifier.ClassWeights {
+			cfg["class_weights"] = true
+		}
+
+		cfg["epochs"] = job.Classifier.Epochs
+		cfg["learning_rate"] = job.Classifier.LearningRate
+		cfg["batch_size"] = job.Classifier.BatchSize
+		cfg["threshold"] = job.Classifier.Threshold
 	}
 
 	data, err := json.MarshalIndent(cfg, "", "  ")

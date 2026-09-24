@@ -31,6 +31,12 @@ func TestModelSelector_ListBaseModels(t *testing.T) {
 			t.Errorf("model %q missing RepoID", m.Name)
 		}
 
+		// CPU-capable models (e.g. small encoders for seq_classifier) may
+		// legitimately have no GPU VRAM requirement or a GPU quantization.
+		if m.Capabilities.RunsOnCPU {
+			continue
+		}
+
 		if m.MinVRAMGB <= 0 {
 			t.Errorf("model %q missing MinVRAMGB", m.Name)
 		}
@@ -49,7 +55,7 @@ func TestModelSelector_SelectBaseModel_Classification(t *testing.T) {
 	t.Parallel()
 
 	ms := simulation.NewModelSelector()
-	task := &domain.Task{Type: domain.TaskClassification}
+	task := &domain.Task{Type: domain.TaskClassification, ID: "", Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}
 
 	// Small dataset, short inputs/outputs → smallest model (score 0).
 	got := ms.SelectBaseModel(task, 100, 50, 20)
@@ -62,7 +68,7 @@ func TestModelSelector_SelectBaseModel_Generation(t *testing.T) {
 	t.Parallel()
 
 	ms := simulation.NewModelSelector()
-	task := &domain.Task{Type: domain.TaskGeneration}
+	task := &domain.Task{Type: domain.TaskGeneration, ID: "", Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}
 
 	// Large generation dataset with long outputs → largest reachable model
 	// (score 5 = Qwen3-4B; the catalog's 7B entry requires score 6
@@ -77,7 +83,7 @@ func TestModelSelector_SelectBaseModel_Extraction(t *testing.T) {
 	t.Parallel()
 
 	ms := simulation.NewModelSelector()
-	task := &domain.Task{Type: domain.TaskExtraction}
+	task := &domain.Task{Type: domain.TaskExtraction, ID: "", Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}
 
 	// Medium extraction dataset → score 1, second model.
 	got := ms.SelectBaseModel(task, 100, 200, 50)
@@ -90,7 +96,7 @@ func TestModelSelector_SelectBaseModel_TinyDataset(t *testing.T) {
 	t.Parallel()
 
 	ms := simulation.NewModelSelector()
-	task := &domain.Task{Type: domain.TaskGeneration}
+	task := &domain.Task{Type: domain.TaskGeneration, ID: "", Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}
 
 	// Generation (+2) + long outputs (+2) - tiny dataset (-1) → score 3.
 	got := ms.SelectBaseModel(task, 10, 100, 300)
@@ -103,7 +109,7 @@ func TestModelSelector_SelectBaseModel_ScoreCap(t *testing.T) {
 	t.Parallel()
 
 	ms := simulation.NewModelSelector()
-	task := &domain.Task{Type: domain.TaskGeneration}
+	task := &domain.Task{Type: domain.TaskGeneration, ID: "", Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}
 
 	// Extreme dataset → score 5 (generation=2 + output>200=+2 + input>800=+1).
 	// With 7 catalog entries, index 5 = Qwen3-4B.
@@ -137,7 +143,7 @@ func TestFineTuner_Start_TooFewExamples(t *testing.T) {
 		gotErr error
 	)
 
-	f.Start(&domain.TrainingJob{}, []*domain.Example{
+	f.Start(&domain.TrainingJob{ID: "", TaskID: "", Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Status: "", Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil}, []*domain.Example{
 		{ID: "e1"},
 		{ID: "e2"},
 	}, func(int) {}, func(_ *domain.TrainingMetrics, err error) {
@@ -179,7 +185,7 @@ func TestFineTuner_Start_ProgressAndDone(t *testing.T) {
 		updates    []int
 	)
 
-	f.Start(&domain.TrainingJob{}, []*domain.Example{
+	f.Start(&domain.TrainingJob{ID: "", TaskID: "", Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Status: "", Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil}, []*domain.Example{
 		{ID: "e1", Input: "a", Output: "b"},
 		{ID: "e2", Input: "c", Output: "d"},
 		{ID: "e3", Input: "e", Output: "f"},
@@ -239,7 +245,7 @@ func TestFineTuner_Start_MetricsBounds(t *testing.T) {
 	// Large dataset → loss should be low, accuracy high but capped ≤ 0.99.
 	examples := make([]*domain.Example, 600)
 	for i := range examples {
-		examples[i] = &domain.Example{ID: string(rune('a' + i%26)), Input: "x", Output: "y"}
+		examples[i] = &domain.Example{ID: string(rune('a' + i%26)), Input: "x", Output: "y", TaskID: "", Source: "", Flagged: false, FlagNote: "", Duplicate: false, CreatedAt: time.Time{}}
 	}
 
 	done := make(chan struct{})
@@ -249,7 +255,7 @@ func TestFineTuner_Start_MetricsBounds(t *testing.T) {
 		gotMetrics *domain.TrainingMetrics
 	)
 
-	f.Start(&domain.TrainingJob{}, examples, func(int) {},
+	f.Start(&domain.TrainingJob{ID: "", TaskID: "", Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Status: "", Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil}, examples, func(int) {},
 		func(metrics *domain.TrainingMetrics, _ error) {
 			mu.Lock()
 			gotMetrics = metrics
@@ -280,9 +286,9 @@ func TestExporter_RejectsNonCompletedJob(t *testing.T) {
 	t.Parallel()
 
 	e := simulation.NewExporter()
-	job := &domain.TrainingJob{ID: "j1", Status: domain.TrainingRunning}
+	job := &domain.TrainingJob{ID: "j1", Status: domain.TrainingRunning, TaskID: "", Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil}
 
-	_, _, err := e.BuildExport(&domain.Task{}, job)
+	_, _, err := e.BuildExport(&domain.Task{ID: "", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}, job)
 	if !errors.Is(err, domain.ErrNoModel) {
 		t.Errorf("expected ErrNoModel, got %v", err)
 	}
@@ -298,17 +304,17 @@ func TestExporter_BuildsZip(t *testing.T) {
 		Status:  domain.TrainingCompleted,
 		BaseModel: domain.BaseModel{
 			Name:   "My Base Model",
-			RepoID: "org/my-base-model",
+			RepoID: "org/my-base-model", ParamsBillions: 0, Family: "",
 		},
 		Metrics: &domain.TrainingMetrics{
 			FinalLoss:    0.4,
-			EvalAccuracy: 0.88,
-		},
+			EvalAccuracy: 0.88, Epochs: 0, TrainExamples: 0,
+		}, TaskID: "", Progress: 0, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil,
 	}
 
 	data, filename, err := e.BuildExport(&domain.Task{
 		Name: "My Fine-Tune Task",
-		Type: domain.TaskClassification,
+		Type: domain.TaskClassification, ID: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{},
 	}, job)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
@@ -389,13 +395,13 @@ func TestExporter_GGUF_RejectsSimulationBackend(t *testing.T) {
 		Status:  domain.TrainingCompleted,
 		BaseModel: domain.BaseModel{
 			Name:   "Base Model",
-			RepoID: "org/base-model",
-		},
+			RepoID: "org/base-model", ParamsBillions: 0, Family: "",
+		}, TaskID: "", Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil,
 	}
 
 	data, filename, err := e.BuildGGUF(&domain.Task{
 		Name: "My Fine-Tune Task",
-		Type: domain.TaskGeneration,
+		Type: domain.TaskGeneration, ID: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{},
 	}, job, domain.GGUFExportOptions{Quantization: "q4_k_m"})
 
 	if data != nil {
@@ -430,8 +436,8 @@ func TestExporter_GGUF_DelegatesToRealConverter(t *testing.T) {
 		Status:  domain.TrainingCompleted,
 		BaseModel: domain.BaseModel{
 			Name:   "Base Model",
-			RepoID: "org/base-model",
-		},
+			RepoID: "org/base-model", ParamsBillions: 0, Family: "",
+		}, TaskID: "", Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil,
 	}
 
 	want := []byte("GGUF\x03\x00\x00\x00") // plausible GGUF magic header.
@@ -444,7 +450,7 @@ func TestExporter_GGUF_DelegatesToRealConverter(t *testing.T) {
 
 	data, filename, err := e.BuildGGUF(&domain.Task{
 		Name: "Delegate Task",
-		Type: domain.TaskGeneration,
+		Type: domain.TaskGeneration, ID: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{},
 	}, job, domain.GGUFExportOptions{Quantization: "q4_k_m"})
 	if err != nil {
 		t.Fatalf("expected delegation to succeed, got %v", err)
@@ -470,8 +476,8 @@ func TestExporter_GGUF_DelegatesError(t *testing.T) {
 		Status:  domain.TrainingCompleted,
 		BaseModel: domain.BaseModel{
 			Name:   "Base Model",
-			RepoID: "org/base-model",
-		},
+			RepoID: "org/base-model", ParamsBillions: 0, Family: "",
+		}, TaskID: "", Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil,
 	}
 
 	e := simulation.NewExporterWithGGUF(&fakeGGUFExporter{
@@ -480,7 +486,7 @@ func TestExporter_GGUF_DelegatesError(t *testing.T) {
 
 	_, _, err := e.BuildGGUF(&domain.Task{
 		Name: "Delegate Task",
-		Type: domain.TaskGeneration,
+		Type: domain.TaskGeneration, ID: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{},
 	}, job, domain.GGUFExportOptions{Quantization: "q4_k_m"})
 	if err == nil {
 		t.Fatal("expected propagated error from real converter")
@@ -514,13 +520,13 @@ func TestExporter_NoMetrics_SafeAccZero(t *testing.T) {
 		Status:  domain.TrainingCompleted,
 		BaseModel: domain.BaseModel{
 			Name:   "Model",
-			RepoID: "org/model",
-		},
+			RepoID: "org/model", ParamsBillions: 0, Family: "",
+		}, TaskID: "", Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil,
 
 		// Metrics nil.
 	}
 
-	data, _, err := e.BuildExport(&domain.Task{Name: "Task", Type: domain.TaskGeneration}, job)
+	data, _, err := e.BuildExport(&domain.Task{Name: "Task", Type: domain.TaskGeneration, ID: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}, job)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}

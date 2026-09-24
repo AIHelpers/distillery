@@ -430,6 +430,14 @@ func (m *mockModelSelector) SelectBaseModel(
 	return m.model
 }
 
+func (m *mockModelSelector) Select(
+	_ domain.ModelKind,
+	_ domain.DatasetStats,
+	_ domain.SelectionConstraints,
+) domain.BaseModel {
+	return m.model
+}
+
 // --- Mock FineTuner ---.
 
 type mockFineTuner struct {

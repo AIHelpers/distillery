@@ -11,6 +11,23 @@ const (
 	TrainingFailed    TrainingStatus = "failed"
 )
 
+// Capabilities describes what a base model can do, so the model selector can
+// right-size a model per kind, dataset size, language, latency target, and
+// hardware.
+type Capabilities struct {
+	// SupportsLoRA indicates the model family supports PEFT LoRA adapters.
+	SupportsLoRA bool `json:"supports_lora"`
+	// ExportFormats lists the export formats this model can produce
+	// (e.g. "gguf", "onnx", "safetensors").
+	ExportFormats []string `json:"export_formats,omitempty"`
+	// RunsOnCPU is true when the model can be trained/served on CPU.
+	RunsOnCPU bool `json:"runs_on_cpu"`
+	// MaxSeqLen is the maximum supported sequence length in tokens.
+	MaxSeqLen int `json:"max_seq_len"`
+	// Languages lists supported natural languages (e.g. "en", "multilingual").
+	Languages []string `json:"languages,omitempty"`
+}
+
 // BaseModel is one entry in the curated set of open-weight base models
 // the platform can automatically select from.
 type BaseModel struct {
@@ -23,6 +40,10 @@ type BaseModel struct {
 	MinVRAMGB float64 `json:"min_vram_gb,omitempty"`
 	// RecommendedQuant is the default quantization level, e.g. "4bit-nf4".
 	RecommendedQuant string `json:"recommended_quant,omitempty"`
+	// Kind is the model kind this entry is suited for (default causal_lm).
+	Kind ModelKind `json:"kind,omitempty"`
+	// Capabilities describes what this model can do.
+	Capabilities Capabilities `json:"capabilities,omitempty"`
 }
 
 // TrainingMetrics are the (simulated) results of a LoRA/QLoRA fine-tune run.
@@ -31,21 +52,43 @@ type TrainingMetrics struct {
 	EvalAccuracy  float64 `json:"eval_accuracy"`
 	Epochs        int     `json:"epochs"`
 	TrainExamples int     `json:"train_examples"`
+
+	// Classifier-specific metrics (populated when Kind == KindSeqClassifier).
+	MacroF1          float64                    `json:"macro_f1,omitempty"`
+	WeightedF1       float64                    `json:"weighted_f1,omitempty"`
+	BaselineMacroF1  float64                    `json:"baseline_macro_f1,omitempty"`
+	DeltaMacroF1     float64                    `json:"delta_macro_f1,omitempty"`
+	PerClass         map[string]PerClassMetrics `json:"per_class,omitempty"`
+	ConfusionMatrix  ConfusionMatrix            `json:"confusion_matrix,omitempty"`
+	ThresholdSweep   []ThresholdSweepPoint      `json:"threshold_sweep,omitempty"`
+	LabelMap         map[string]int             `json:"label_map,omitempty"`
+	DefaultThreshold float64                    `json:"default_threshold,omitempty"`
+	MaxLength        int                        `json:"max_length,omitempty"`
+	MultiLabel       bool                       `json:"multi_label,omitempty"`
 }
 
 // TrainingJob represents one fine-tuning run for a task.
 type TrainingJob struct {
-	ID          string           `json:"id"`
-	TaskID      string           `json:"task_id"`
-	Version     int              `json:"version"` // increments each retrain.
-	BaseModel   BaseModel        `json:"base_model"`
-	Status      TrainingStatus   `json:"status"`
-	Progress    int              `json:"progress"` // 0-100
-	Metrics     *TrainingMetrics `json:"metrics,omitempty"`
-	Error       string           `json:"error,omitempty"`
-	CreatedAt   time.Time        `json:"created_at"`
-	StartedAt   *time.Time       `json:"started_at,omitempty"`
-	CompletedAt *time.Time       `json:"completed_at,omitempty"`
+	ID        string           `json:"id"`
+	TaskID    string           `json:"task_id"`
+	Version   int              `json:"version"` // increments each retrain.
+	Kind      ModelKind        `json:"kind"`
+	BaseModel BaseModel        `json:"base_model"`
+	Status    TrainingStatus   `json:"status"`
+	Progress  int              `json:"progress"` // 0-100
+	Metrics   *TrainingMetrics `json:"metrics,omitempty"`
+	Eval      *EvalReport      `json:"eval,omitempty"`
+	Error     string           `json:"error,omitempty"`
+	// Classifier holds the hyperparameters passed to a seq_classifier
+	// training run (empty for causal_lm).
+	Classifier *ClassifierConfig `json:"classifier,omitempty"`
+	// ParentJobID links this job to the job it continues from (lineage for
+	// DPO and continued training). Empty for the first job in a lineage.
+	ParentJobID string     `json:"parent_job_id,omitempty"`
+	Seed        int        `json:"seed,omitempty"` // held-out split seed for reproducibility.
+	CreatedAt   time.Time  `json:"created_at"`
+	StartedAt   *time.Time `json:"started_at,omitempty"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
 }
 
 // TrainingJobRepository is the port for persisting training jobs.
@@ -58,9 +101,24 @@ type TrainingJobRepository interface {
 	LatestCompleted(taskID string) (*TrainingJob, error)
 }
 
-// ModelSelector chooses a base model for a task based on dataset complexity.
+// SelectionConstraints are the hardware/latency limits a model must satisfy.
+type SelectionConstraints struct {
+	// MaxVRAMGB caps VRAM usage (0 = no limit).
+	MaxVRAMGB float64
+	// MaxLatencyMS caps p95 latency for serving (0 = no limit).
+	MaxLatencyMS int
+	// CPUOnly forces a CPU-capable model (no GPU available).
+	CPUOnly bool
+}
+
+// ModelSelector chooses a base model for a task based on dataset complexity
+// and the requested model kind.
 type ModelSelector interface {
+	// SelectBaseModel is the legacy task-based selection (kept for
+	// backward compatibility); kind-aware callers should use Select.
 	SelectBaseModel(task *Task, exampleCount int, avgInputLen, avgOutputLen int) BaseModel
+	// Select picks the right-sized base model for a kind + dataset stats.
+	Select(kind ModelKind, stats DatasetStats, constraints SelectionConstraints) BaseModel
 	// ListBaseModels returns the curated catalog of available base models
 	// the user can choose from.
 	ListBaseModels() []BaseModel

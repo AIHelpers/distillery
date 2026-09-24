@@ -13,15 +13,24 @@ const (
 // Inference calls against Endpoint must present the raw API key that was
 // returned (once) at deploy time; only its hash is ever persisted.
 type Deployment struct {
-	ID            string           `json:"id"`
-	TaskID        string           `json:"task_id"`
-	TrainingJobID string           `json:"training_job_id"`
-	Endpoint      string           `json:"endpoint"`
-	Autoscale     bool             `json:"autoscale"`
-	Status        DeploymentStatus `json:"status"`
-	RequestCount  int              `json:"request_count"`
-	APIKeyHash    string           `json:"-"` // never serialized; raw key shown once at creation.
-	CreatedAt     time.Time        `json:"created_at"`
+	ID            string `json:"id"`
+	TaskID        string `json:"task_id"`
+	TrainingJobID string `json:"training_job_id"`
+	// Kind is the architectural model kind served by this deployment.
+	Kind         ModelKind        `json:"kind"`
+	Endpoint     string           `json:"endpoint"`
+	Autoscale    bool             `json:"autoscale"`
+	Status       DeploymentStatus `json:"status"`
+	RequestCount int              `json:"request_count"`
+	APIKeyHash   string           `json:"-"` // never serialized; raw key shown once at creation.
+	CreatedAt    time.Time        `json:"created_at"`
+
+	// LabelMap maps label -> id for seq_classifier deployments (used by the
+	// inference server to decode the model head). Empty for causal_lm.
+	LabelMap map[string]int `json:"label_map,omitempty"`
+	// ConfidenceThreshold is the default below-threshold cutoff for
+	// seq_classifier deployments (predictions under it enter the review queue).
+	ConfidenceThreshold float64 `json:"confidence_threshold,omitempty"`
 }
 
 // DeploymentRepository is the port for persisting deployments.

@@ -78,3 +78,20 @@ def test_config_from_dict_overrides() -> None:
     assert cfg.epochs == 5
     assert cfg.use_lora is False
     assert cfg.lora_rank == 4
+
+
+def test_progress_writer_eval_f1_and_event_kind_fields() -> None:
+    buf = io.StringIO()
+    writer = ProgressWriter(stream=buf)
+
+    writer.progress(step=2, total_steps=10, epoch=0.5, eval_f1=0.81)
+    rec = json.loads(buf.getvalue().strip().splitlines()[0])
+    assert rec["type"] == "progress"
+    assert rec["eval_f1"] == 0.81
+
+    # event() must tolerate metrics dicts that carry kind/status fields.
+    writer.event("complete", **{"status": "completed", "kind": "seq_classifier"})
+    rec2 = json.loads(buf.getvalue().strip().splitlines()[1])
+    assert rec2["type"] == "complete"
+    assert rec2["kind"] == "seq_classifier"
+    assert rec2["status"] == "completed"

@@ -1,9 +1,12 @@
 package http
 
 import (
+	"crypto/subtle"
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 )
 
@@ -18,6 +21,12 @@ type Handlers struct {
 	FineTune   *FineTuneHandler
 	ModelStore *ModelStoreHandler
 }
+
+// adminToken holds the static admin token used to authorize the management
+// API. It is read once from the ADMIN_TOKEN env var; when empty, auth is
+// disabled (local/no-GPU demo). This keeps the management surface safe to
+// expose past localhost while remaining frictionless in dev.
+var adminToken = os.Getenv("ADMIN_TOKEN")
 
 // NewRouter builds the full HTTP handler: the JSON API under /api/v1 plus
 // the embedded single-page web UI served at /.
@@ -39,7 +48,52 @@ func NewRouter(h Handlers, webFS fs.FS) http.Handler {
 	// --- Static web UI ---.
 	mux.Handle("/", http.FileServer(http.FS(webFS)))
 
-	return withLogging(mux)
+	// Protect the management API. Auth middleware wraps only /api/v1/*
+	// routes; the /api/v1/inference/* endpoints are exempt because they are
+	// authorized individually with the per-deployment API key handed out at
+	// deploy time. When ADMIN_TOKEN is unset the middleware passes through,
+	// keeping the local demo frictionless.
+	return withLogging(requireRouteAuth(mux, adminToken))
+}
+
+// requireRouteAuth gates every request against the admin token, except the
+// inference endpoints which use their own per-deployment key.
+func requireRouteAuth(next http.Handler, token string) http.Handler {
+	if token == "" {
+		return next
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/inference/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if !validAdminToken(token, r) {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// validAdminToken checks the request against the static admin token using a
+// constant-time comparison, accepting it either via the Authorization:
+// Bearer header or the X-Admin-Token header.
+func validAdminToken(token string, r *http.Request) bool {
+	got := r.Header.Get("Authorization")
+	if strings.HasPrefix(got, "Bearer ") {
+		got = strings.TrimPrefix(got, "Bearer ")
+	} else {
+		got = r.Header.Get("X-Admin-Token")
+	}
+
+	if got == "" {
+		return false
+	}
+
+	return subtle.ConstantTimeCompare([]byte(got), []byte(token)) == 1
 }
 
 func registerTaskRoutes(mux *http.ServeMux, h Handlers) {

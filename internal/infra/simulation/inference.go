@@ -55,6 +55,56 @@ func (e *InferenceEngine) Predict(
 	return best.Output, Round2(confidence)
 }
 
+// PredictClassification implements domain.ClassifierInferenceEngine. It reuses
+// the same nearest-neighbor approach as Predict but maps the matched training
+// example's label into a full per-class score distribution (the top label gets
+// the confidence mass, the rest get a small share) so the seq_classifier API
+// shape is exercised without real trained weights.
+func (e *InferenceEngine) PredictClassification(
+	job *domain.TrainingJob,
+	trainingExamples []*domain.Example,
+	input string,
+	labelMap map[string]int,
+	threshold float64,
+) (domain.ClassifierPrediction, error) {
+	if len(labelMap) == 0 {
+		return domain.ClassifierPrediction{}, domain.ErrNotFound
+	}
+
+	label, conf := e.Predict(job, trainingExamples, input)
+
+	// Distribute the confidence mass: top label gets `conf`, the remainder is
+	// split among the other labels (weighted so the ordering is plausible).
+	scores := make(map[string]float64, len(labelMap))
+	remaining := 1 - conf
+
+	rest := make([]string, 0, len(labelMap)-1)
+	for lbl := range labelMap {
+		if lbl != label {
+			rest = append(rest, lbl)
+		}
+	}
+
+	if len(rest) == 0 {
+		scores[label] = 1
+	} else {
+		share := remaining / float64(len(rest))
+		for _, lbl := range rest {
+			scores[lbl] = Round2(share)
+		}
+
+		scores[label] = Round2(conf)
+	}
+
+	return domain.ClassifierPrediction{
+		Label:  label,
+		Score:  Round2(conf),
+		Scores: scores,
+		// Compare the same rounded score that is returned to callers.
+		BelowThreshold: Round2(conf) < threshold,
+	}, nil
+}
+
 func tokenize(s string) map[string]bool {
 	words := strings.Fields(strings.ToLower(s))
 

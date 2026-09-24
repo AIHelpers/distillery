@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	time "time"
 
 	"distillery/internal/domain"
 	"distillery/internal/infra/modelstore"
@@ -16,8 +17,8 @@ func localStore(root string) *domain.ModelStore {
 		Name:    "Local Base",
 		Type:    domain.ModelStoreLocal,
 		Kind:    domain.ModelStoreBase,
-		Config:  domain.ModelStoreConfig{Path: root},
-		Enabled: true,
+		Config:  domain.ModelStoreConfig{Path: root, RepoID: "", Token: "", CacheDir: "", Endpoint: "", Bucket: "", Region: "", AccessKey: "", SecretKey: ""},
+		Enabled: true, CreatedAt: time.Time{},
 	}
 }
 
@@ -192,7 +193,7 @@ func TestTransfer_UnsupportedBackend(t *testing.T) {
 	t.Parallel()
 
 	tr := modelstore.New("")
-	s := &domain.ModelStore{ID: "s", Type: "unknown", Kind: domain.ModelStoreBase}
+	s := &domain.ModelStore{ID: "s", Type: "unknown", Kind: domain.ModelStoreBase, Name: "", Config: domain.ModelStoreConfig{Path: "", RepoID: "", Token: "", CacheDir: "", Endpoint: "", Bucket: "", Region: "", AccessKey: "", SecretKey: ""}, Enabled: false, CreatedAt: time.Time{}}
 
 	_, err := tr.List(s)
 	if !errors.Is(err, domain.ErrStoreUnsupported) {

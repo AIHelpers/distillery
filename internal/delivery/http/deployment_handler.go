@@ -224,6 +224,7 @@ func (h *DeploymentHandler) StartGGUFAsync(w http.ResponseWriter, r *http.Reques
 	quantization := ggufQuantization(r)
 
 	opts := domain.GGUFExportOptions{Quantization: quantization}
+
 	err := h.uc.StartGGUFAsync(taskID, "", sessionID, opts)
 	if err != nil {
 		handleErr(w, err)
@@ -243,6 +244,7 @@ func (h *DeploymentHandler) StartGGUFAsyncVersion(w http.ResponseWriter, r *http
 	quantization := ggufQuantization(r)
 
 	opts := domain.GGUFExportOptions{Quantization: quantization}
+
 	err := h.uc.StartGGUFAsync(taskID, jobID, sessionID, opts)
 	if err != nil {
 		handleErr(w, err)
