@@ -24,6 +24,13 @@ type Deployment struct {
 	RequestCount int              `json:"request_count"`
 	APIKeyHash   string           `json:"-"` // never serialized; raw key shown once at creation.
 	CreatedAt    time.Time        `json:"created_at"`
+
+	// LabelMap maps label -> id for seq_classifier deployments (used by the
+	// inference server to decode the model head). Empty for causal_lm.
+	LabelMap map[string]int `json:"label_map,omitempty"`
+	// ConfidenceThreshold is the default below-threshold cutoff for
+	// seq_classifier deployments (predictions under it enter the review queue).
+	ConfidenceThreshold float64 `json:"confidence_threshold,omitempty"`
 }
 
 // DeploymentRepository is the port for persisting deployments.

@@ -18,3 +18,9 @@ gguf>=0.10.0
 # Optional fallback: llama-cpp-python (requires native C++ compilation)
 # llama-cpp-python>=0.2.5
 # torchao>=0.1.0
+
+# Sequence-classifier trainer: metrics, stratified split, ONNX export.
+scikit-learn>=1.3.0
+numpy>=1.24.0
+optimum>=1.17.0
+onnxruntime>=1.17.0

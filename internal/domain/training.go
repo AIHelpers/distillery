@@ -52,6 +52,19 @@ type TrainingMetrics struct {
 	EvalAccuracy  float64 `json:"eval_accuracy"`
 	Epochs        int     `json:"epochs"`
 	TrainExamples int     `json:"train_examples"`
+
+	// Classifier-specific metrics (populated when Kind == KindSeqClassifier).
+	MacroF1          float64                    `json:"macro_f1,omitempty"`
+	WeightedF1       float64                    `json:"weighted_f1,omitempty"`
+	BaselineMacroF1  float64                    `json:"baseline_macro_f1,omitempty"`
+	DeltaMacroF1     float64                    `json:"delta_macro_f1,omitempty"`
+	PerClass         map[string]PerClassMetrics `json:"per_class,omitempty"`
+	ConfusionMatrix  ConfusionMatrix            `json:"confusion_matrix,omitempty"`
+	ThresholdSweep   []ThresholdSweepPoint      `json:"threshold_sweep,omitempty"`
+	LabelMap         map[string]int             `json:"label_map,omitempty"`
+	DefaultThreshold float64                    `json:"default_threshold,omitempty"`
+	MaxLength        int                        `json:"max_length,omitempty"`
+	MultiLabel       bool                       `json:"multi_label,omitempty"`
 }
 
 // TrainingJob represents one fine-tuning run for a task.
@@ -66,6 +79,9 @@ type TrainingJob struct {
 	Metrics   *TrainingMetrics `json:"metrics,omitempty"`
 	Eval      *EvalReport      `json:"eval,omitempty"`
 	Error     string           `json:"error,omitempty"`
+	// Classifier holds the hyperparameters passed to a seq_classifier
+	// training run (empty for causal_lm).
+	Classifier *ClassifierConfig `json:"classifier,omitempty"`
 	// ParentJobID links this job to the job it continues from (lineage for
 	// DPO and continued training). Empty for the first job in a lineage.
 	ParentJobID string     `json:"parent_job_id,omitempty"`

@@ -17,7 +17,10 @@ func NewTaskUsecase(tasks domain.TaskRepository, examples domain.ExampleReposito
 	return &TaskUsecase{tasks: tasks, examples: examples, idGen: idGen}
 }
 
-func (u *TaskUsecase) CreateTask(name, description string, taskType domain.TaskType) (*domain.Task, error) {
+// CreateTask stores a new task. The optional model kind selects the model
+// architecture used for training (seq_classifier, ...); omit it for the
+// causal_lm default.
+func (u *TaskUsecase) CreateTask(name, description string, taskType domain.TaskType, kind ...domain.ModelKind) (*domain.Task, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, domain.ErrInvalidInput
@@ -29,6 +32,16 @@ func (u *TaskUsecase) CreateTask(name, description string, taskType domain.TaskT
 		return nil, domain.ErrInvalidInput
 	}
 
+	modelKind := domain.DefaultModelKind
+
+	if len(kind) > 0 && kind[0] != "" {
+		if !domain.IsValidModelKind(kind[0]) {
+			return nil, domain.ErrInvalidInput
+		}
+
+		modelKind = kind[0]
+	}
+
 	now := time.Now().UTC()
 
 	t := &domain.Task{
@@ -36,6 +49,7 @@ func (u *TaskUsecase) CreateTask(name, description string, taskType domain.TaskT
 		Name:        name,
 		Description: strings.TrimSpace(description),
 		Type:        taskType,
+		Kind:        modelKind,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}

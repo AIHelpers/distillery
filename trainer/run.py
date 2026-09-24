@@ -22,6 +22,7 @@ from pathlib import Path
 
 from trainer.progress import ProgressWriter
 from trainer.tasks import get, kinds
+from trainer.tasks.sft import Config  # noqa: F401  (back-compat re-export)
 
 
 def main() -> int:

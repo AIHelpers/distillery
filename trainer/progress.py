@@ -44,6 +44,7 @@ class ProgressWriter:
         epoch: float,
         loss: Optional[float] = None,
         eval_loss: Optional[float] = None,
+        eval_f1: Optional[float] = None,
         lr: Optional[float] = None,
     ) -> None:
         self.write(
@@ -53,16 +54,17 @@ class ProgressWriter:
             epoch=epoch,
             loss=loss,
             eval_loss=eval_loss,
+            eval_f1=eval_f1,
             lr=lr,
         )
 
     def metric(self, name: str, value: float, step: int, epoch: int) -> None:
         self.write("metric", name=name, value=value, step=step, epoch=epoch)
 
-    def event(self, kind: str, **fields: Any) -> None:
+    def event(self, event_type: str, **fields: Any) -> None:
         # A caller-supplied `type` field must not collide with the event kind.
         fields.pop("type", None)
-        self.write(kind, **fields)
+        self.write(event_type, **fields)
 
     def close(self) -> None:
         if self._fh is not None:

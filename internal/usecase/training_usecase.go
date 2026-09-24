@@ -86,7 +86,20 @@ func (u *TrainingUsecase) StartTraining(taskID string, baseModelID ...string) (*
 
 	avgIn, avgOut := totalIn/len(usable), totalOut/len(usable)
 
-	base := u.selector.SelectBaseModel(task, len(usable), avgIn, avgOut)
+	// The task kind drives the trainer module, dataset schema, and catalog
+	// section; pre-kind records default to causal_lm.
+	kind := task.Kind
+	if !domain.IsValidModelKind(kind) {
+		kind = domain.DefaultModelKind
+	}
+
+	var base domain.BaseModel
+	if kind == domain.KindCausalLM {
+		base = u.selector.SelectBaseModel(task, len(usable), avgIn, avgOut)
+	} else {
+		stats := domain.DatasetStats{TaskID: taskID, Kind: kind, Total: len(usable), UsableCount: len(usable)}
+		base = u.selector.Select(kind, stats, domain.SelectionConstraints{})
+	}
 
 	// Prefer the user's explicit model choice over the auto-recommendation.
 	if len(baseModelID) > 0 && baseModelID[0] != "" {
@@ -102,6 +115,7 @@ func (u *TrainingUsecase) StartTraining(taskID string, baseModelID ...string) (*
 		ID:        u.idGen.NewID("job"),
 		TaskID:    taskID,
 		Version:   version,
+		Kind:      kind,
 		BaseModel: base,
 		Status:    domain.TrainingRunning,
 		Progress:  0,

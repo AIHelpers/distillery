@@ -28,6 +28,9 @@ type createTaskRequest struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Type        string `json:"type"`
+	// Kind optionally selects the model architecture (seq_classifier, ...);
+	// empty falls back to the causal_lm default.
+	Kind string `json:"kind"`
 }
 
 type addExamplesRequest struct {

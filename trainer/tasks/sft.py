@@ -303,7 +303,7 @@ def run(cfg: Config, writer: ProgressWriter, job_dir: Path, dataset_path: str) -
             eval_result = trainer.evaluate()
             final_metrics.update(eval_result)
 
-        writer.event("complete", status="completed", **final_metrics)
+        writer.event("complete", **final_metrics)  # final_metrics already carries status and kind
         save_metrics(job_dir, final_metrics)
 
         if stop_requested:

@@ -25,3 +25,11 @@ def get(kind: str) -> Optional[TaskRunner]:
 
 def kinds() -> list[str]:
     return sorted(_REGISTRY)
+
+
+# Import task modules LAST so each can do `from trainer.tasks import
+# register` at module import time. Importing them above the definitions
+# above triggers a circular import: the module re-enters trainer.tasks
+# while it is partially initialized ("cannot import name 'register'").
+# run.py only needs `get(kind)` / `kinds()` after this import runs.
+from trainer.tasks import classifier, sft  # noqa: E402,F401

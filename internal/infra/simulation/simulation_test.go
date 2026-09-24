@@ -31,6 +31,12 @@ func TestModelSelector_ListBaseModels(t *testing.T) {
 			t.Errorf("model %q missing RepoID", m.Name)
 		}
 
+		// CPU-capable models (e.g. small encoders for seq_classifier) may
+		// legitimately have no GPU VRAM requirement or a GPU quantization.
+		if m.Capabilities.RunsOnCPU {
+			continue
+		}
+
 		if m.MinVRAMGB <= 0 {
 			t.Errorf("model %q missing MinVRAMGB", m.Name)
 		}
