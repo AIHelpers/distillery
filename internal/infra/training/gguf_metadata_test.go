@@ -246,12 +246,13 @@ func TestValidateGGUFCompleteness_CompleteFile(t *testing.T) {
 	path := dir + "/complete.gguf"
 
 	data := buildGGUFFixture(completeGQUFKeys())
+
 	err := writeFile(path, data)
 	if err != nil {
 		t.Fatalf("failed to write fixture: %v", err)
 	}
 
-	err := ValidateGGUFCompleteness(path)
+	err = ValidateGGUFCompleteness(path)
 	if err != nil {
 		t.Errorf("expected complete GGUF to pass validation, got: %v", err)
 	}

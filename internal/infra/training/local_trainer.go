@@ -208,7 +208,7 @@ func (l *LocalTrainer) AddActiveJob(jobID string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	l.active[&trainingProcess{job: &domain.TrainingJob{ID: jobID}}] = true
+	l.active[&trainingProcess{job: &domain.TrainingJob{ID: jobID, TaskID: "", Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Status: "", Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil}}] = true
 }
 
 // GCOldJobs runs the retention GC once (test helper).
@@ -285,6 +285,7 @@ func (l *LocalTrainer) runJob(
 	// Launch subprocess.
 	args := []string{
 		"-m", "trainer.run",
+		"--kind", string(job.Kind),
 		"--job-dir", jobDir,
 		"--config", filepath.Join(jobDir, "config.json"),
 		"--dataset", filepath.Join(jobDir, "dataset.jsonl"),
@@ -541,8 +542,14 @@ func (l *LocalTrainer) writeJobConfig(
 ) error {
 	_ = examples
 
+	kind := job.Kind
+	if kind == "" {
+		kind = domain.DefaultModelKind
+	}
+
 	cfg := map[string]interface{}{
 		"job_id":       job.ID,
+		"kind":         string(kind),
 		"base_model":   job.BaseModel.RepoID,
 		"language":     "python",
 		"skill":        "code_generation",

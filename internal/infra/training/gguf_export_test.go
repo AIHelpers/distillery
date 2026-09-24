@@ -70,6 +70,7 @@ func TestFileExists(t *testing.T) {
 	}
 
 	path := filepath.Join(dir, "file.txt")
+
 	err := os.WriteFile(path, []byte("hello"), 0o644)
 	if err != nil {
 		t.Fatalf("failed to write: %v", err)
@@ -390,6 +391,7 @@ func TestBuildGGUF_ConcurrentRequests(t *testing.T) {
 	job := completedJob("job_conc")
 
 	adapterDir := filepath.Join(dir, job.ID, "adapter")
+
 	err := os.MkdirAll(adapterDir, 0o755)
 	if err != nil {
 		t.Fatalf("failed mkdir: %v", err)

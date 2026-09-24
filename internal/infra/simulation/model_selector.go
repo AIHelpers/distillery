@@ -80,6 +80,24 @@ func (s *ModelSelector) ListBaseModels() []domain.BaseModel {
 	return s.Catalog
 }
 
+// candidatesForKind returns the catalog entries suitable for the given kind,
+// defaulting to causal_lm entries when a kind has no specific entries yet.
+func (s *ModelSelector) candidatesForKind(kind domain.ModelKind) []domain.BaseModel {
+	var out []domain.BaseModel
+
+	for _, m := range s.Catalog {
+		if m.Kind == "" || m.Kind == kind {
+			out = append(out, m)
+		}
+	}
+
+	if len(out) == 0 {
+		return s.Catalog // fall back to all (legacy behavior).
+	}
+
+	return out
+}
+
 // SelectBaseModel picks the smallest model likely to work for the task,
 // scaling up for generation tasks, larger vocabularies, or longer outputs.
 func (s *ModelSelector) SelectBaseModel(
@@ -124,4 +142,57 @@ func (s *ModelSelector) SelectBaseModel(
 	}
 
 	return s.Catalog[score]
+}
+
+// Select picks the right-sized model for a kind + dataset stats, honoring
+// hardware constraints (VRAM, CPU-only). Falls back to the legacy task-based
+// selection when stats are insufficient.
+func (s *ModelSelector) Select(
+	kind domain.ModelKind,
+	stats domain.DatasetStats,
+	constraints domain.SelectionConstraints,
+) domain.BaseModel {
+	candidates := s.candidatesForKind(kind)
+	if len(candidates) == 0 {
+		return domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}
+	}
+
+	// Right-sizing: use the smallest candidate that satisfies constraints.
+	// Larger datasets justify a larger model; small datasets stay small.
+	idx := 0
+
+	switch {
+	case stats.Total > 2000:
+		idx = len(candidates) / 2
+	case stats.Total > 300:
+		idx = len(candidates) / 3
+	}
+
+	for i := idx; i < len(candidates); i++ {
+		m := candidates[i]
+
+		if constraints.CPUOnly && !m.Capabilities.RunsOnCPU {
+			continue
+		}
+
+		if constraints.MaxVRAMGB > 0 && m.MinVRAMGB > constraints.MaxVRAMGB {
+			continue
+		}
+
+		if constraints.MaxLatencyMS > 0 && m.ParamsBillions > 3 {
+			// Heuristic: models > 3B are unlikely to hit tight latency.
+			continue
+		}
+
+		return m
+	}
+
+	// No candidate satisfies every constraint — return the smallest
+	// unconstrained one rather than failing the selection.
+	if len(candidates) > 0 {
+		return candidates[0]
+	}
+
+	// Ultra-safe fallback: the very first catalog entry.
+	return s.Catalog[0]
 }

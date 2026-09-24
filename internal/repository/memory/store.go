@@ -13,8 +13,15 @@ import (
 	"distillery/internal/domain"
 )
 
+// schemaVersion is the current snapshot layout version. Bumped whenever we
+// change the shape of persisted records so load() can apply migrations.
+const schemaVersion = 2
+
 // snapshot is the full application state, serialized as one JSON document.
 type snapshot struct {
+	// SchemaVersion identifies the snapshot layout. Older snapshots (which
+	// lack this field, or have a lower number) are migrated in load().
+	SchemaVersion    int                                `json:"schema_version,omitempty"`
 	Tasks            map[string]*domain.Task            `json:"tasks"`
 	Examples         map[string][]*domain.Example       `json:"examples"`      // keyed by task ID.
 	TrainingJobs     map[string][]*domain.TrainingJob   `json:"training_jobs"` // keyed by task ID.
@@ -86,6 +93,12 @@ func (s *Store) load() {
 		return
 	}
 
+	s.migrate(&snap)
+
+	if snap.SchemaVersion < schemaVersion {
+		snap.SchemaVersion = schemaVersion
+	}
+
 	if snap.Tasks != nil {
 		s.Tasks = snap.Tasks
 	}
@@ -138,6 +151,7 @@ func (s *Store) persist() {
 	}
 
 	snap := snapshot{
+		SchemaVersion:    schemaVersion,
 		Tasks:            s.Tasks,
 		Examples:         s.Examples,
 		TrainingJobs:     s.TrainingJobs,
@@ -166,4 +180,54 @@ func (s *Store) persist() {
 	}
 
 	_ = os.Rename(tmp, s.path)
+}
+
+// migrate applies upgrades to older snapshot layouts so they become valid
+// under the current schema. Since SchemaVersion only bumped to 2 (adding
+// ModelKind), the sole migration is filling missing Kind fields with the
+// default causal_lm value. Future migrations (e.g. SQLite switch) would
+// chain here keyed on snap.SchemaVersion.
+func (s *Store) migrate(snap *snapshot) {
+	if snap.SchemaVersion >= schemaVersion {
+		return // already current.
+	}
+
+	// Fill missing Kind on tasks, jobs, deployments, examples, and base models.
+	for _, t := range snap.Tasks {
+		if t != nil && t.Kind == "" {
+			t.Kind = domain.DefaultModelKind
+		}
+	}
+
+	for _, jobs := range snap.TrainingJobs {
+		for _, j := range jobs {
+			if j == nil {
+				continue
+			}
+
+			if j.Kind == "" {
+				j.Kind = domain.DefaultModelKind
+			}
+
+			if j.BaseModel.Kind == "" {
+				j.BaseModel.Kind = domain.DefaultModelKind
+			}
+		}
+	}
+
+	for _, deps := range snap.Deployments {
+		for _, d := range deps {
+			if d != nil && d.Kind == "" {
+				d.Kind = domain.DefaultModelKind
+			}
+		}
+	}
+
+	for _, exs := range snap.Examples {
+		for _, e := range exs {
+			if e != nil && e.Kind == "" {
+				e.Kind = domain.DefaultModelKind
+			}
+		}
+	}
 }

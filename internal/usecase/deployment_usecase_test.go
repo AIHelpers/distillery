@@ -276,7 +276,7 @@ func TestDeploymentUsecase_DeployVersion_NoModelReasons(t *testing.T) {
 				ID:        "job_1",
 				TaskID:    "other_task",
 				Status:    domain.TrainingCompleted,
-				BaseModel: domain.BaseModel{Name: "M"},
+				BaseModel: domain.BaseModel{Name: "M", ParamsBillions: 0, Family: ""}, Version: 0, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil,
 			},
 			wantMsg: "task mismatch",
 		},
@@ -286,7 +286,7 @@ func TestDeploymentUsecase_DeployVersion_NoModelReasons(t *testing.T) {
 				ID:        "job_1",
 				TaskID:    "task_1",
 				Status:    domain.TrainingRunning,
-				BaseModel: domain.BaseModel{Name: "M"},
+				BaseModel: domain.BaseModel{Name: "M", ParamsBillions: 0, Family: ""}, Version: 0, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil,
 			},
 			wantMsg: "non-completed job",
 		},
@@ -296,7 +296,7 @@ func TestDeploymentUsecase_DeployVersion_NoModelReasons(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1"}}
+			tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
 			jobs := &mockTrainingRepo{job: tt.job}
 			uc := newDeploymentUsecase(
 				tasks,

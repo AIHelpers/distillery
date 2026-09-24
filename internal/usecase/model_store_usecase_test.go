@@ -3,6 +3,7 @@ package usecase_test
 import (
 	"errors"
 	"testing"
+	time "time"
 
 	"distillery/internal/domain"
 	"distillery/internal/usecase"
@@ -144,10 +145,13 @@ func newModelStoreUC(repo *mockModelStoreRepo, transfer *mockModelTransfer) *use
 }
 
 func enabledStore(id string, kind domain.ModelStoreKind) *domain.ModelStore {
-	return &domain.ModelStore{ID: id, Name: "s", Type: domain.ModelStoreLocal, Kind: kind, Enabled: true}
-}
+	return &domain.ModelStore{
+		ID: id, Name: "s", Type: domain.ModelStoreLocal, Kind: kind, Enabled: true, Config:
 
-// --- CreateStore ---.
+		// --- CreateStore ---.
+		domain.ModelStoreConfig{Path: "", RepoID: "", Token: "", CacheDir: "", Endpoint: "", Bucket: "", Region: "", AccessKey: "", SecretKey: ""}, CreatedAt: time.Time{},
+	}
+}
 
 func TestModelStoreUsecase_CreateStore_Valid(t *testing.T) {
 	t.Parallel()
@@ -155,7 +159,7 @@ func TestModelStoreUsecase_CreateStore_Valid(t *testing.T) {
 	repo := &mockModelStoreRepo{}
 	uc := newModelStoreUC(repo, &mockModelTransfer{})
 
-	s, err := uc.CreateStore("Base Models", domain.ModelStoreLocal, domain.ModelStoreBase, domain.ModelStoreConfig{Path: "/tmp"})
+	s, err := uc.CreateStore("Base Models", domain.ModelStoreLocal, domain.ModelStoreBase, domain.ModelStoreConfig{Path: "/tmp", RepoID: "", Token: "", CacheDir: "", Endpoint: "", Bucket: "", Region: "", AccessKey: "", SecretKey: ""})
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -182,7 +186,7 @@ func TestModelStoreUsecase_CreateStore_EmptyName(t *testing.T) {
 
 	uc := newModelStoreUC(&mockModelStoreRepo{}, &mockModelTransfer{})
 
-	_, err := uc.CreateStore("", domain.ModelStoreLocal, domain.ModelStoreBase, domain.ModelStoreConfig{})
+	_, err := uc.CreateStore("", domain.ModelStoreLocal, domain.ModelStoreBase, domain.ModelStoreConfig{Path: "", RepoID: "", Token: "", CacheDir: "", Endpoint: "", Bucket: "", Region: "", AccessKey: "", SecretKey: ""})
 	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput, got %v", err)
 	}
@@ -193,7 +197,7 @@ func TestModelStoreUsecase_CreateStore_InvalidType(t *testing.T) {
 
 	uc := newModelStoreUC(&mockModelStoreRepo{}, &mockModelTransfer{})
 
-	_, err := uc.CreateStore("x", "unknown", domain.ModelStoreBase, domain.ModelStoreConfig{})
+	_, err := uc.CreateStore("x", "unknown", domain.ModelStoreBase, domain.ModelStoreConfig{Path: "", RepoID: "", Token: "", CacheDir: "", Endpoint: "", Bucket: "", Region: "", AccessKey: "", SecretKey: ""})
 	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput, got %v", err)
 	}
@@ -204,7 +208,7 @@ func TestModelStoreUsecase_CreateStore_InvalidKind(t *testing.T) {
 
 	uc := newModelStoreUC(&mockModelStoreRepo{}, &mockModelTransfer{})
 
-	_, err := uc.CreateStore("x", domain.ModelStoreLocal, "unknown", domain.ModelStoreConfig{})
+	_, err := uc.CreateStore("x", domain.ModelStoreLocal, "unknown", domain.ModelStoreConfig{Path: "", RepoID: "", Token: "", CacheDir: "", Endpoint: "", Bucket: "", Region: "", AccessKey: "", SecretKey: ""})
 	if !errors.Is(err, domain.ErrInvalidInput) {
 		t.Errorf("expected ErrInvalidInput, got %v", err)
 	}
@@ -266,7 +270,7 @@ func TestModelStoreUsecase_UpdateStore(t *testing.T) {
 	repo := &mockModelStoreRepo{stored: []*domain.ModelStore{enabledStore("s1", domain.ModelStoreBase)}}
 	uc := newModelStoreUC(repo, &mockModelTransfer{})
 
-	s, err := uc.UpdateStore("s1", "Renamed", false, domain.ModelStoreConfig{Path: "/new"})
+	s, err := uc.UpdateStore("s1", "Renamed", false, domain.ModelStoreConfig{Path: "/new", RepoID: "", Token: "", CacheDir: "", Endpoint: "", Bucket: "", Region: "", AccessKey: "", SecretKey: ""})
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
