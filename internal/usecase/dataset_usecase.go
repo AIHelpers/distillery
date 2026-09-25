@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"encoding/csv"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -123,9 +124,7 @@ func (u *DatasetUsecase) ListExamples(taskID string) ([]*domain.Example, error) 
 	return u.examples.ListByTask(taskID)
 }
 
-// ImportCSV bulk-loads example pairs from CSV content. If the first row has
-// "input"/"output" column headers (case-insensitive) those columns are used;
-// otherwise the first two columns of every row are treated as input/output.
+// ImportCSV bulk-loads example pairs from CSV content.
 func (u *DatasetUsecase) ImportCSV(taskID, content string) (*domain.DatasetStats, error) {
 	_, err := u.tasks.Get(taskID)
 	if err != nil {
@@ -177,7 +176,7 @@ func (u *DatasetUsecase) ImportCSV(taskID, content string) (*domain.DatasetStats
 	return u.AddExamples(taskID, pairs)
 }
 
-// UpdateExample edits an existing example's input/output and re-curates the dataset.
+// UpdateExample edits an existing example's input/output and re-curates.
 func (u *DatasetUsecase) UpdateExample(taskID, exampleID, input, output string) (*domain.DatasetStats, error) {
 	input, output = strings.TrimSpace(input), strings.TrimSpace(output)
 	if input == "" || output == "" {
@@ -190,7 +189,6 @@ func (u *DatasetUsecase) UpdateExample(taskID, exampleID, input, output string) 
 	}
 
 	e.Input = input
-
 	e.Output = output
 
 	err = u.examples.Update(e)
@@ -240,12 +238,25 @@ func (u *DatasetUsecase) Curate(taskID string) (*domain.DatasetStats, error) {
 	seenInputs := map[string]bool{}
 
 	for _, e := range list {
-		key := strings.ToLower(strings.TrimSpace(e.Input))
+		key := curationKey(e)
 		wasDup := seenInputs[key]
 		e.Duplicate = wasDup
 		seenInputs[key] = true
 
-		e.Flagged, e.FlagNote = qualityFlag(e)
+		holdout := e.FlagNote == "holdout:query_group"
+
+		flagged, note := qualityFlag(e)
+
+		if flagged {
+			e.Flagged = true
+			e.FlagNote = note
+		} else if holdout {
+			e.Flagged = false
+			e.FlagNote = "holdout:query_group"
+		} else {
+			e.Flagged = false
+			e.FlagNote = ""
+		}
 
 		_ = u.examples.Update(e)
 
@@ -278,17 +289,79 @@ func (u *DatasetUsecase) Curate(taskID string) (*domain.DatasetStats, error) {
 	return stats, nil
 }
 
+// curationKey derives a dedup key from an example. Legacy text-only kinds use
+// the Input/Output fields; retrieval kinds (embedding/reranker) use the query
+// text plus the positive/document text so identical pairs are collapsed.
+func curationKey(e *domain.Example) string {
+	query, positive, negative, doc := payloadFields(e)
+
+	switch {
+	case negative != "":
+		return "triplet:" + strings.ToLower(query) + "\x00" + strings.ToLower(positive) + "\x00" + strings.ToLower(negative)
+	case doc != "" && query != "":
+		return "graded:" + strings.ToLower(query) + "\x00" + strings.ToLower(doc)
+	case doc != "":
+		return "docs:" + strings.ToLower(doc)
+	case query != "" && positive != "":
+		return "pair:" + strings.ToLower(query) + "\x00" + strings.ToLower(positive)
+	default:
+		return strings.ToLower(strings.TrimSpace(e.Input))
+	}
+}
+
+func payloadFields(e *domain.Example) (query, positive, negative, doc string) {
+	if len(e.Payload) == 0 {
+		return e.Input, e.Output, "", ""
+	}
+
+	var p struct {
+		Query    string `json:"query"`
+		Positive string `json:"positive"`
+		Negative string `json:"negative"`
+		Document string `json:"document"`
+	}
+
+	_ = json.Unmarshal(e.Payload, &p)
+
+	return p.Query, p.Positive, p.Negative, p.Document
+}
+
+// qualityFlag flags low-quality examples. Retrieval kinds (embedding/reranker)
+// store their structured text (query/positive/document) in the typed Payload,
+// so those rows are checked against each other for duplicate text. Legacy
+// text-only kinds use the Input/Output fields and are checked for length and
+// input==output noise.
 func qualityFlag(e *domain.Example) (flagged bool, note string) {
-	if len(e.Input) < minInputLen {
-		return true, "input too short"
+	if len(e.Payload) == 0 {
+		// Text-only kind: check Input/Output directly.
+		if len(e.Input) < minInputLen {
+			return true, "input too short"
+		}
+
+		if len(e.Output) < minOutputLen {
+			return true, "output too short"
+		}
+
+		if strings.EqualFold(strings.TrimSpace(e.Input), strings.TrimSpace(e.Output)) {
+			return true, "input and output are identical"
+		}
+
+		return false, ""
 	}
 
-	if len(e.Output) < minOutputLen {
-		return true, "output too short"
+	// Retrieval kind (typed Payload present).
+	query, positive, _, doc := payloadFields(e)
+
+	if query != "" && positive != "" && strings.EqualFold(strings.TrimSpace(query), strings.TrimSpace(positive)) {
+		return true, "query and positive document are identical"
 	}
 
-	if strings.EqualFold(strings.TrimSpace(e.Input), strings.TrimSpace(e.Output)) {
-		return true, "input and output are identical"
+	if query != "" && doc != "" && strings.EqualFold(strings.TrimSpace(query), strings.TrimSpace(doc)) {
+		return true, "query and document are identical"
+	}
+
+	if query == "" && positive == "" && doc == "" {
+		return true, "missing query and document text"
 	}
 
 	return false, ""

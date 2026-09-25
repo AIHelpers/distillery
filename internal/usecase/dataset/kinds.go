@@ -99,15 +99,43 @@ func (s *TokenClassifierSchema) Formats() []domain.ImportFormat {
 
 // --- Embedding ---.
 
-// EmbeddingSchema validates payloads for text embedding training:
-// {"text": "...", "label": "..."} (label optional — used for contrastive
-// or clustering tasks; may be absent for pure retrieval-style datasets).
+// EmbeddingDataFormat denotes the shape of an embedding training example.
+type EmbeddingDataFormat string
+
+const (
+	// EmbeddingPair is {"query","positive"} — minimum viable, in-batch negatives.
+	EmbeddingPair EmbeddingDataFormat = "pair"
+	// EmbeddingTriplet is {"query","positive","negative"} — better, hard negatives.
+	EmbeddingTriplet EmbeddingDataFormat = "triplet"
+	// EmbeddingDocsOnly is a set of documents with no queries — synthetic
+	// query generation is used to bootstrap pairs.
+	EmbeddingDocsOnly EmbeddingDataFormat = "docs_only"
+)
+
+// EmbeddingSchema validates payloads for text embedding training.
+// Supported shapes:
+//
+//	pair:     {"query","positive"}
+//	triplet:  {"query","positive","negative"}
+//	docs only: {"document"} (no query — used for synthetic query generation)
 type EmbeddingSchema struct{}
 
-// embeddingPayload is the JSON object shape for an embedding example.
-type embeddingPayload struct {
-	Text  string `json:"text"`
-	Label string `json:"label,omitempty"`
+// embeddingPairPayload is the JSON shape for a pair-style embedding example.
+type embeddingPairPayload struct {
+	Query    string `json:"query"`
+	Positive string `json:"positive"`
+}
+
+// embeddingTripletPayload is the JSON shape for a triplet-style embedding example.
+type embeddingTripletPayload struct {
+	Query    string `json:"query"`
+	Positive string `json:"positive"`
+	Negative string `json:"negative"`
+}
+
+// EmbeddingDocPayload is the JSON shape for a docs-only embedding example.
+type EmbeddingDocPayload struct {
+	Document string `json:"document"`
 }
 
 // Kind implements domain.DatasetSchema.
@@ -115,15 +143,40 @@ func (s *EmbeddingSchema) Kind() domain.ModelKind { return domain.KindEmbedding 
 
 // Validate implements domain.DatasetSchema.
 func (s *EmbeddingSchema) Validate(payload json.RawMessage) error {
-	var p embeddingPayload
-
-	err := json.Unmarshal(payload, &p)
-	if err != nil {
-		return &schemaError{kind: domain.KindEmbedding, msg: "payload must be a JSON object with a text field"}
+	var probe struct {
+		Query    string `json:"query"`
+		Positive string `json:"positive"`
+		Negative string `json:"negative"`
+		Document string `json:"document"`
 	}
 
-	if strings.TrimSpace(p.Text) == "" {
-		return &schemaError{kind: domain.KindEmbedding, msg: "text is required"}
+	err := json.Unmarshal(payload, &probe)
+	if err != nil {
+		return &schemaError{kind: domain.KindEmbedding, msg: "payload must be a JSON object with query/positive (pair), query/positive/negative (triplet), or document (docs-only) fields"}
+	}
+
+	// Docs-only.
+	if strings.TrimSpace(probe.Document) != "" &&
+		strings.TrimSpace(probe.Query) == "" && strings.TrimSpace(probe.Positive) == "" {
+		if len(strings.TrimSpace(probe.Document)) < 2 {
+			return &schemaError{kind: domain.KindEmbedding, msg: "document is too short"}
+		}
+
+		return nil
+	}
+
+	// Pair.
+	if strings.TrimSpace(probe.Query) == "" {
+		return &schemaError{kind: domain.KindEmbedding, msg: "query is required"}
+	}
+
+	if strings.TrimSpace(probe.Positive) == "" {
+		return &schemaError{kind: domain.KindEmbedding, msg: "positive (relevant document) is required"}
+	}
+
+	// Triplet.
+	if strings.TrimSpace(probe.Negative) != "" && len(strings.TrimSpace(probe.Negative)) < 2 {
+		return &schemaError{kind: domain.KindEmbedding, msg: "negative is too short"}
 	}
 
 	return nil
@@ -131,7 +184,7 @@ func (s *EmbeddingSchema) Validate(payload json.RawMessage) error {
 
 // Stats implements domain.DatasetSchema.
 func (s *EmbeddingSchema) Stats(examples []*domain.Example) domain.DatasetStats {
-	return genericStats(domain.KindEmbedding, examples)
+	return embeddingStats(examples)
 }
 
 // Formats implements domain.DatasetSchema.
@@ -142,13 +195,18 @@ func (s *EmbeddingSchema) Formats() []domain.ImportFormat {
 // --- Reranker ---.
 
 // RerankerSchema validates payloads for query/document relevance scoring:
-// {"query": "...", "document": "...", "label": true|false} (label optional).
+// {"query": "...", "document": "...", "label": 0|1 or graded}.
+// Label: bool (true/false), or float/int graded relevance (0.0-1.0).
 type RerankerSchema struct{}
 
 // rerankerPayload is the JSON object shape for a reranker example.
 type rerankerPayload struct {
 	Query    string `json:"query"`
 	Document string `json:"document"`
+	// Label may be bool (0/1) or a graded relevance float (0.0-1.0).
+	Label *float64 `json:"label,omitempty"`
+	// Relevance is the float-only synonym for Label (accept both spellings).
+	Relevance *float64 `json:"relevance,omitempty"`
 }
 
 // Kind implements domain.DatasetSchema.
@@ -160,7 +218,7 @@ func (s *RerankerSchema) Validate(payload json.RawMessage) error {
 
 	err := json.Unmarshal(payload, &p)
 	if err != nil {
-		return &schemaError{kind: domain.KindReranker, msg: "payload must be a JSON object with query/document fields"}
+		return &schemaError{kind: domain.KindReranker, msg: "payload must be a JSON object with query/document/label fields"}
 	}
 
 	if strings.TrimSpace(p.Query) == "" {
@@ -176,7 +234,7 @@ func (s *RerankerSchema) Validate(payload json.RawMessage) error {
 
 // Stats implements domain.DatasetSchema.
 func (s *RerankerSchema) Stats(examples []*domain.Example) domain.DatasetStats {
-	return genericStats(domain.KindReranker, examples)
+	return rerankerStats(examples)
 }
 
 // Formats implements domain.DatasetSchema.
@@ -232,6 +290,75 @@ func (s *PreferenceLMSchema) Stats(examples []*domain.Example) domain.DatasetSta
 // Formats implements domain.DatasetSchema.
 func (s *PreferenceLMSchema) Formats() []domain.ImportFormat {
 	return []domain.ImportFormat{domain.FormatJSONL}
+}
+
+// embeddingStats computes stats for embedding datasets, distinguishing the
+// number of pair vs triplet vs docs-only examples.
+func embeddingStats(examples []*domain.Example) domain.DatasetStats {
+	stats := genericStats(domain.KindEmbedding, examples)
+	pairs, triplets, docs := 0, 0, 0
+
+	for _, e := range examples {
+		var p struct {
+			Query    string `json:"query"`
+			Negative string `json:"negative"`
+			Document string `json:"document"`
+		}
+		if len(e.Payload) > 0 {
+			_ = json.Unmarshal(e.Payload, &p)
+		}
+
+		switch {
+		case strings.TrimSpace(p.Document) != "" && strings.TrimSpace(p.Query) == "":
+			docs++
+		case strings.TrimSpace(p.Negative) != "":
+			triplets++
+		default:
+			pairs++
+		}
+	}
+
+	stats.LabelBalance = map[string]int{
+		"pairs":    pairs,
+		"triplets": triplets,
+		"docs":     docs,
+	}
+
+	return stats
+}
+
+// rerankerStats computes stats for reranker datasets (graded pairs).
+func rerankerStats(examples []*domain.Example) domain.DatasetStats {
+	stats := genericStats(domain.KindReranker, examples)
+
+	var graded, binary int
+
+	for _, e := range examples {
+		var p rerankerPayload
+		if len(e.Payload) > 0 {
+			_ = json.Unmarshal(e.Payload, &p)
+		}
+
+		label := 0.0
+		if p.Label != nil {
+			label = *p.Label
+		} else if p.Relevance != nil {
+			label = *p.Relevance
+		}
+
+		if label == 0 || label == 1 {
+			binary++
+		} else {
+			graded++
+		}
+	}
+
+	stats.LabelBalance = map[string]int{
+		"binary_0_1": binary,
+		"graded":     graded,
+	}
+
+	return stats
 }
 
 // --- Shared stats builders ---.

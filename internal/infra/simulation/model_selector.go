@@ -156,6 +156,108 @@ func NewModelSelector() *ModelSelector {
 					Languages:     []string{"multilingual"},
 				},
 			},
+
+			// --- Embedding models (bi-encoders) ---.
+			{
+				Name:           "bge-small-en-v1.5",
+				ParamsBillions: 0.033,
+				Family:         "BGE",
+				RepoID:         "BAAI/bge-small-en-v1.5",
+				Kind:           domain.KindEmbedding,
+				Capabilities: domain.Capabilities{
+					SupportsLoRA:  true,
+					ExportFormats: []string{"onnx", "safetensors"},
+					RunsOnCPU:     true,
+					MaxSeqLen:     512,
+					Languages:     []string{"en"},
+				},
+			},
+			{
+				Name:           "bge-base-en-v1.5",
+				ParamsBillions: 0.109,
+				Family:         "BGE",
+				RepoID:         "BAAI/bge-base-en-v1.5",
+				Kind:           domain.KindEmbedding,
+				Capabilities: domain.Capabilities{
+					SupportsLoRA:  true,
+					ExportFormats: []string{"onnx", "safetensors"},
+					RunsOnCPU:     true,
+					MaxSeqLen:     512,
+					Languages:     []string{"en"},
+				},
+			},
+			{
+				Name:           "e5-base-v2",
+				ParamsBillions: 0.109,
+				Family:         "E5",
+				RepoID:         "intfloat/e5-base-v2",
+				Kind:           domain.KindEmbedding,
+				Capabilities: domain.Capabilities{
+					SupportsLoRA:  true,
+					ExportFormats: []string{"onnx", "safetensors"},
+					RunsOnCPU:     true,
+					MaxSeqLen:     512,
+					Languages:     []string{"en"},
+				},
+			},
+			{
+				Name:           "gte-base",
+				ParamsBillions: 0.109,
+				Family:         "GTE",
+				RepoID:         "thenlper/gte-base",
+				Kind:           domain.KindEmbedding,
+				Capabilities: domain.Capabilities{
+					SupportsLoRA:  true,
+					ExportFormats: []string{"onnx", "safetensors"},
+					RunsOnCPU:     true,
+					MaxSeqLen:     512,
+					Languages:     []string{"en"},
+				},
+			},
+			{
+				Name:           "multilingual-e5-base",
+				ParamsBillions: 0.278,
+				Family:         "E5",
+				RepoID:         "intfloat/multilingual-e5-base",
+				Kind:           domain.KindEmbedding,
+				Capabilities: domain.Capabilities{
+					SupportsLoRA:  true,
+					ExportFormats: []string{"onnx", "safetensors"},
+					RunsOnCPU:     true,
+					MaxSeqLen:     512,
+					Languages:     []string{"multilingual"},
+				},
+			},
+
+			// --- Reranker models (cross-encoders) ---.
+			{
+				Name:           "bge-reranker-base",
+				ParamsBillions: 0.279,
+				Family:         "BGE",
+				RepoID:         "BAAI/bge-reranker-base",
+				Kind:           domain.KindReranker,
+				Capabilities: domain.Capabilities{
+					SupportsLoRA:  true,
+					ExportFormats: []string{"onnx", "safetensors"},
+					RunsOnCPU:     true,
+					MaxSeqLen:     512,
+					Languages:     []string{"en"},
+				},
+			},
+			{
+				Name:           "ms-marco-MiniLM-L-6",
+				ParamsBillions: 0.022,
+				Family:         "CrossEncoder",
+				RepoID:         "cross-encoder/ms-marco-MiniLM-L-6-v2",
+				Kind:           domain.KindReranker,
+				Capabilities: domain.Capabilities{
+					SupportsLoRA:  true,
+					ExportFormats: []string{"onnx", "safetensors"},
+					RunsOnCPU:     true,
+					MaxSeqLen:     512,
+					Languages:     []string{"en"},
+				},
+			},
 		},
 	}
 }

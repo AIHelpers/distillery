@@ -6,10 +6,11 @@ import (
 	"distillery/internal/domain"
 )
 
-// InferenceEngine implements domain.InferenceEngine. It simulates a served
-// fine-tuned model (vLLM/TGI in production) using nearest-neighbor lookup
-// against the training set so the deployed-endpoint demo behaves plausibly
-// without requiring real trained weights.
+// InferenceEngine implements domain.InferenceEngine (plus
+// domain.EmbeddingEngine and domain.RerankerInferenceEngine). It simulates a
+// served fine-tuned model (vLLM/TGI in production) using nearest-neighbor
+// lookup against the training set so the deployed-endpoint demo behaves
+// plausibly without requiring real trained weights.
 type InferenceEngine struct{}
 
 func NewInferenceEngine() *InferenceEngine { return &InferenceEngine{} }
@@ -103,6 +104,133 @@ func (e *InferenceEngine) PredictClassification(
 		// Compare the same rounded score that is returned to callers.
 		BelowThreshold: Round2(conf) < threshold,
 	}, nil
+}
+
+// Embed implements domain.EmbeddingEngine by returning a deterministic
+// vector per input so the /embed endpoint has a working shape without real
+// trained weights. The dim matches the training job's recorded
+// embedding_dim (default 768 for bge/small encoders).
+func (e *InferenceEngine) Embed(
+	job *domain.TrainingJob,
+	inputs []string,
+	embedType string,
+) domain.EmbeddingResult {
+	dim := 768
+	if job.Metrics != nil && job.Metrics.EmbeddingDim > 0 {
+		dim = job.Metrics.EmbeddingDim
+	}
+
+	// Deterministic pseudo-vector hashing: each token contributes a stable
+	// pseudo-random basis vector projected onto the dim. Query/document type
+	// shifts the seed so the two prefixes produce distinct vectors.
+	seedShift := int64(0)
+	if embedType == "document" {
+		seedShift = 7
+	}
+
+	vecs := make([][]float32, 0, len(inputs))
+	for _, in := range inputs {
+		vec := make([]float32, dim)
+		tokens := tokenize(in)
+
+		if len(tokens) == 0 {
+			tokens["__empty__"] = true
+		}
+
+		for tok := range tokens {
+			h := hashString(tok) + uint64(seedShift)
+			for i := range dim {
+				// SplitMix64-style PRNG per (token, dimension) for stability.
+				x := h + uint64(i)*0x9E3779B97F4A7C15
+				x ^= x >> 30
+				x *= 0xBF58476D1CE4E5B9
+				x ^= x >> 27
+				x *= 0x94D049BB133111EB
+				x ^= x >> 31
+				f := float64(x%100000) / 100000.0
+				signed := f*2 - 1
+				vec[i] += float32(signed)
+			}
+		}
+
+		sum := 0.0
+		for _, v := range vec {
+			sum += float64(v) * float64(v)
+		}
+
+		if sum > 0 {
+			inv := float32(1.0 / sqrt(sum))
+			for i := range vec {
+				vec[i] *= inv
+			}
+		}
+
+		vecs = append(vecs, vec)
+	}
+
+	return domain.EmbeddingResult{Dim: dim, Vectors: vecs}
+}
+
+// Rerank implements domain.RerankerInferenceEngine using Jaccard overlap
+// between the query and each document to produce a deterministic ranking.
+func (e *InferenceEngine) Rerank(
+	_ *domain.TrainingJob,
+	query string,
+	documents []string,
+) domain.RerankResult {
+	queryTokens := tokenize(query)
+
+	type scored struct {
+		idx   int
+		score float64
+	}
+
+	scoredDocs := make([]scored, 0, len(documents))
+	for i, doc := range documents {
+		s := jaccard(queryTokens, tokenize(doc))
+		scoredDocs = append(scoredDocs, scored{idx: i, score: s})
+	}
+
+	// Sort desc by score, stable by index.
+	for i := 0; i < len(scoredDocs); i++ {
+		for j := i + 1; j < len(scoredDocs); j++ {
+			if scoredDocs[j].score > scoredDocs[i].score ||
+				(scoredDocs[j].score == scoredDocs[i].score && scoredDocs[j].idx < scoredDocs[i].idx) {
+				scoredDocs[i], scoredDocs[j] = scoredDocs[j], scoredDocs[i]
+			}
+		}
+	}
+
+	ranking := make([]domain.RerankItem, 0, len(scoredDocs))
+	for _, s := range scoredDocs {
+		ranking = append(ranking, domain.RerankItem{Index: s.idx, Score: Round2(s.score)})
+	}
+
+	return domain.RerankResult{Ranking: ranking}
+}
+
+func hashString(s string) uint64 {
+	var h uint64 = 14695981039346656037
+	for i := range len(s) {
+		h ^= uint64(s[i])
+		h *= 1099511628211
+	}
+
+	return h
+}
+
+func sqrt(x float64) float64 {
+	// Newton's method; good enough for normalisation.
+	if x <= 0 {
+		return 0
+	}
+
+	z := x
+	for range 40 {
+		z = (z + x/z) / 2
+	}
+
+	return z
 }
 
 func tokenize(s string) map[string]bool {

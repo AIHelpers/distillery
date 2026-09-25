@@ -65,6 +65,22 @@ type TrainingMetrics struct {
 	DefaultThreshold float64                    `json:"default_threshold,omitempty"`
 	MaxLength        int                        `json:"max_length,omitempty"`
 	MultiLabel       bool                       `json:"multi_label,omitempty"`
+
+	// Retrieval metrics (populated when Kind == KindEmbedding or KindReranker).
+	// NDCG10 / MRR10 / Recall1 / Recall5 / Recall10 are the tuned model's
+	// scores; Base* are the base (un-fine-tuned) model on the same split so
+	// the UI can show the gain.
+	NDCG10       float64 `json:"ndcg10,omitempty"`
+	MRR10        float64 `json:"mrr10,omitempty"`
+	Recall1      float64 `json:"recall1,omitempty"`
+	Recall5      float64 `json:"recall5,omitempty"`
+	Recall10     float64 `json:"recall10,omitempty"`
+	BaseNDCG10   float64 `json:"base_ndcg10,omitempty"`
+	BaseMRR10    float64 `json:"base_mrr10,omitempty"`
+	BaseRecall1  float64 `json:"base_recall1,omitempty"`
+	BaseRecall5  float64 `json:"base_recall5,omitempty"`
+	BaseRecall10 float64 `json:"base_recall10,omitempty"`
+	EmbeddingDim int     `json:"embedding_dim,omitempty"`
 }
 
 // TrainingJob represents one fine-tuning run for a task.
@@ -82,6 +98,14 @@ type TrainingJob struct {
 	// Classifier holds the hyperparameters passed to a seq_classifier
 	// training run (empty for causal_lm).
 	Classifier *ClassifierConfig `json:"classifier,omitempty"`
+	// Embedding holds the hyperparameters passed to an embedding training
+	// run (empty unless Kind == KindEmbedding).
+	Embedding *EmbeddingConfig `json:"embedding,omitempty"`
+	// Reranker holds the hyperparameters passed to a reranker training
+	// run (empty unless Kind == KindReranker).
+	Reranker *RerankerConfig `json:"reranker,omitempty"`
+	// Model records the per-model inference metadata (dim, prefixes, etc).
+	Model ModelRecord `json:"model,omitempty"`
 	// ParentJobID links this job to the job it continues from (lineage for
 	// DPO and continued training). Empty for the first job in a lineage.
 	ParentJobID string     `json:"parent_job_id,omitempty"`
