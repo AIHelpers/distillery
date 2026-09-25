@@ -32,4 +32,4 @@ def kinds() -> list[str]:
 # above triggers a circular import: the module re-enters trainer.tasks
 # while it is partially initialized ("cannot import name 'register'").
 # run.py only needs `get(kind)` / `kinds()` after this import runs.
-from trainer.tasks import classifier, sft  # noqa: E402,F401
+from trainer.tasks import classifier, ner, sft  # noqa: E402,F401

@@ -110,6 +110,14 @@ function showNewTaskModal() {
           <option value="extraction">Extraction</option>
           <option value="generation">Generation</option>
         </select>
+        <label>Model Architecture / Kind</label>
+        <select id="nt-kind" style="width:100%;background:var(--charcoal);color:var(--paper);border:1px solid var(--charcoal-3);border-radius:3px;padding:9px 11px;font-family:var(--font-mono);font-size:13px;">
+          <option value="causal_lm">Causal LM (Generative / Instruction / Structured Extraction)</option>
+          <option value="token_classifier">Token Classifier (NER / Span Extraction)</option>
+          <option value="seq_classifier">Sequence Classifier (Sentiment / Intent)</option>
+          <option value="embedding">Embedding (Search / Similarity)</option>
+          <option value="reranker">Reranker (Cross-Encoder)</option>
+        </select>
         <div class="modal-actions">
           <button class="btn ghost" id="nt-cancel">Cancel</button>
           <button class="btn primary" id="nt-create">Create Task</button>
@@ -124,12 +132,13 @@ function showNewTaskModal() {
     const name = document.getElementById("nt-name").value.trim();
     const description = document.getElementById("nt-desc").value.trim();
     const type = document.getElementById("nt-type").value;
+    const kind = document.getElementById("nt-kind").value;
     if (!name) {
       toast("Name your task before creating it.", true);
       return;
     }
     try {
-      const t = await api("POST", "/tasks", { name, description, type });
+      const t = await api("POST", "/tasks", { name, description, type, kind });
       closeModal();
       await loadTasks();
       selectTask(t.id);
@@ -257,6 +266,25 @@ Can I change my email on file? -> account"></textarea>
       </div>
     </div>
 
+    ${task.kind === "token_classifier" ? `
+    <div class="card">
+      <h3>Import Named Entity Recognition (NER) Spans</h3>
+      <p class="hint">Upload annotations in <strong>JSONL spans</strong>, <strong>CoNLL</strong> (token-per-line BIO), or <strong>CSV</strong> format.</p>
+      <div class="field" style="margin-bottom:12px;">
+        <label>JSONL Spans (<code>{"text": "...", "entities": [{"start":0,"end":4,"label":"ORG"}]}</code>)</label>
+        <input type="file" id="ner-jsonl-file-input" accept=".jsonl,text/plain" />
+      </div>
+      <div class="field" style="margin-bottom:12px;">
+        <label>CoNLL (Token + BIO tag per line)</label>
+        <input type="file" id="conll-file-input" accept=".conll,.txt,text/plain" />
+      </div>
+      <div class="field">
+        <label>CSV with span columns</label>
+        <input type="file" id="ner-csv-file-input" accept=".csv,text/csv" />
+      </div>
+      <div class="hint" id="ner-file-status"></div>
+    </div>
+    ` : `
     <div class="card">
       <h3>Import from CSV</h3>
       <p class="hint">Upload a CSV with <span class="source-tag">input</span> and
@@ -285,6 +313,18 @@ Can I change my email on file? -> account"></textarea>
       </div>
       <div class="hint" id="jsonl-file-status"></div>
     </div>
+    `}
+
+    ${task.type === "extraction" ? `
+    <div class="card">
+      <h3>Track B: JSON Schema for Extraction</h3>
+      <p class="hint">Constrain LLM output to valid JSON matching this schema (generates GBNF grammar for llama.cpp). Validated on import.</p>
+      <textarea id="task-schema-input" rows="4" placeholder='{"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}'>${escapeHtml(task.json_schema || "")}</textarea>
+      <div class="modal-actions" style="justify-content:flex-start; margin-top:8px;">
+        <button class="btn small" id="save-schema-btn">Save JSON Schema</button>
+      </div>
+    </div>
+    ` : ""}
 
     <div class="card">
       <h3>Bootstrap synthetic examples</h3>
@@ -363,24 +403,104 @@ Can I change my email on file? -> account"></textarea>
     }
   };
 
-  document.getElementById("jsonl-file-input").onchange = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const statusEl = document.getElementById("jsonl-file-status");
-    statusEl.textContent = "Importing…";
-    const format = document.getElementById("jsonl-format").value;
-    try {
-      const text = await file.text();
-      const url = `/tasks/${task.id}/examples/import-jsonl` + (format ? `?format=${encodeURIComponent(format)}` : "");
-      const res = await apiRawOrThrow("POST", url, text, { "Content-Type": "application/x-ndjson" });
-      const stats = await res.json();
-      toast(`Imported JSONL — dataset now has ${stats.total} example(s).`);
-      renderDatasetPanel(task);
-    } catch (err) {
-      statusEl.textContent = "";
-      toast(err.message, true);
-    }
-  };
+  const jsonlInput = document.getElementById("jsonl-file-input");
+  if (jsonlInput) {
+    jsonlInput.onchange = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const statusEl = document.getElementById("jsonl-file-status");
+      statusEl.textContent = "Importing…";
+      const format = (document.getElementById("jsonl-format") || {}).value;
+      try {
+        const text = await file.text();
+        const url = `/tasks/${task.id}/examples/import-jsonl` + (format ? `?format=${encodeURIComponent(format)}` : "");
+        const res = await apiRawOrThrow("POST", url, text, { "Content-Type": "application/x-ndjson" });
+        const stats = await res.json();
+        toast(`Imported JSONL — dataset now has ${stats.total} example(s).`);
+        renderDatasetPanel(task);
+      } catch (err) {
+        statusEl.textContent = "";
+        toast(err.message, true);
+      }
+    };
+  }
+
+  // --- NER importers ---
+  const nerJsonlInput = document.getElementById("ner-jsonl-file-input");
+  if (nerJsonlInput) {
+    nerJsonlInput.onchange = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const statusEl = document.getElementById("ner-file-status");
+      statusEl.textContent = "Importing NER JSONL…";
+      try {
+        const text = await file.text();
+        const res = await apiRawOrThrow("POST", `/tasks/${task.id}/examples/import-ner-jsonl`, text, { "Content-Type": "application/x-ndjson" });
+        const stats = await res.json();
+        toast(`Imported NER spans — dataset now has ${stats.total} example(s).`);
+        renderDatasetPanel(task);
+      } catch (err) {
+        statusEl.textContent = "";
+        toast(err.message, true);
+      }
+    };
+  }
+
+  const conllInput = document.getElementById("conll-file-input");
+  if (conllInput) {
+    conllInput.onchange = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const statusEl = document.getElementById("ner-file-status");
+      statusEl.textContent = "Importing CoNLL…";
+      try {
+        const text = await file.text();
+        const res = await apiRawOrThrow("POST", `/tasks/${task.id}/examples/import-conll`, text, { "Content-Type": "text/plain" });
+        const stats = await res.json();
+        toast(`Imported CoNLL sentences — dataset now has ${stats.total} example(s).`);
+        renderDatasetPanel(task);
+      } catch (err) {
+        statusEl.textContent = "";
+        toast(err.message, true);
+      }
+    };
+  }
+
+  const nerCsvInput = document.getElementById("ner-csv-file-input");
+  if (nerCsvInput) {
+    nerCsvInput.onchange = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const statusEl = document.getElementById("ner-file-status");
+      statusEl.textContent = "Importing NER CSV…";
+      try {
+        const text = await file.text();
+        const res = await apiRawOrThrow("POST", `/tasks/${task.id}/examples/import-ner-csv`, text, { "Content-Type": "text/csv" });
+        const stats = await res.json();
+        toast(`Imported NER CSV — dataset now has ${stats.total} example(s).`);
+        renderDatasetPanel(task);
+      } catch (err) {
+        statusEl.textContent = "";
+        toast(err.message, true);
+      }
+    };
+  }
+
+  // --- Track B Schema save ---
+  const saveSchemaBtn = document.getElementById("save-schema-btn");
+  if (saveSchemaBtn) {
+    saveSchemaBtn.onclick = async () => {
+      const schemaText = document.getElementById("task-schema-input").value.trim();
+      try {
+        await api("PATCH", `/tasks/${task.id}`, { json_schema: schemaText });
+        task.json_schema = schemaText;
+        toast("JSON Schema saved.");
+        renderDatasetPanel(task);
+      } catch (err) {
+        toast(err.message, true);
+      }
+    };
+  }
 
   panel.querySelectorAll("[data-edit-id]").forEach((btn) => {
     btn.onclick = () => showEditExampleModal(task, btn.dataset.editId, btn.dataset.editInput, btn.dataset.editOutput);
@@ -608,8 +728,19 @@ async function renderTrainingPanel(task) {
 }
 
 function renderJobRow(j) {
-  const metrics = j.metrics
-    ? `<span class="hint">loss ${j.metrics.final_loss.toFixed(2)} · acc ${(j.metrics.eval_accuracy * 100).toFixed(0)}% · ${j.metrics.train_examples} examples</span>`
+  let metricsHint = "";
+  if (j.metrics) {
+    if (j.kind === "token_classifier" && j.metrics.entity_f1 !== undefined) {
+      metricsHint = `Entity F1: <strong>${(j.metrics.entity_f1 * 100).toFixed(1)}%</strong> (P: ${(j.metrics.entity_precision * 100).toFixed(1)}% · R: ${(j.metrics.entity_recall * 100).toFixed(1)}%) · ${j.metrics.train_examples} examples`;
+    } else {
+      metricsHint = `loss ${j.metrics.final_loss.toFixed(2)} · acc ${(j.metrics.eval_accuracy * 100).toFixed(0)}% · ${j.metrics.train_examples} examples`;
+      if (j.metrics.json_validity_rate !== undefined && j.metrics.json_validity_rate !== null) {
+        metricsHint += ` · <span class="badge" style="background:var(--ok);color:#fff;">JSON valid: ${(j.metrics.json_validity_rate * 100).toFixed(0)}%</span>`;
+      }
+    }
+  }
+  const metrics = metricsHint
+    ? `<span class="hint">${metricsHint}</span>`
     : j.error
     ? `<span class="hint" style="color:var(--err)">${escapeHtml(j.error)}</span>`
     : "";
@@ -821,11 +952,32 @@ async function renderDeployPanel(task) {
           Authorization: "Bearer " + key,
         });
         const data = await res.json();
-        document.getElementById("predict-result").innerHTML = `
-          <div class="predict-result">
-            <div class="out">${escapeHtml(data.output)}</div>
-            <div class="conf">confidence ${(data.confidence * 100).toFixed(0)}%</div>
-          </div>`;
+        if (data.kind === "token_classifier" && data.result && Array.isArray(data.result.entities)) {
+          const ents = data.result.entities;
+          let highlighted = escapeHtml(input);
+          // Highlight spans in reverse order so character offsets remain stable
+          const sorted = ents.slice().sort((a, b) => b.start - a.start);
+          for (const ent of sorted) {
+            const before = highlighted.slice(0, ent.start);
+            const inside = highlighted.slice(ent.start, ent.end);
+            const after = highlighted.slice(ent.end);
+            highlighted = `${before}<mark style="background:#fef08a;padding:2px 4px;border-radius:3px;"><strong>${inside}</strong> <span style="font-size:10px;background:#eab308;color:#000;padding:1px 3px;border-radius:2px;">${escapeHtml(ent.label)} ${(ent.score * 100).toFixed(0)}%</span></mark>${after}`;
+          }
+          const tableRows = ents.map((e) => `<tr><td>${escapeHtml(e.text)}</td><td><span class="source-tag">${escapeHtml(e.label)}</span></td><td>${e.start}..${e.end}</td><td>${(e.score * 100).toFixed(0)}%</td></tr>`).join("");
+          document.getElementById("predict-result").innerHTML = `
+            <div class="predict-result" style="margin-top:12px;">
+              <div class="hint">Annotated input:</div>
+              <div class="out" style="line-height:1.8; margin-bottom:12px;">${highlighted}</div>
+              <div class="hint">Predicted entities (${ents.length}):</div>
+              <table><thead><tr><th>Text</th><th>Label</th><th>Span</th><th>Confidence</th></tr></thead><tbody>${tableRows || '<tr><td colspan="4" class="muted">No entities predicted</td></tr>'}</tbody></table>
+            </div>`;
+        } else {
+          document.getElementById("predict-result").innerHTML = `
+            <div class="predict-result">
+              <div class="out">${escapeHtml(data.output || (data.result && data.result.label) || JSON.stringify(data.result || data))}</div>
+              <div class="conf">confidence ${((data.confidence || (data.result && data.result.score) || 0.95) * 100).toFixed(0)}%</div>
+            </div>`;
+        }
       } catch (e) {
         toast(e.message, true);
       }

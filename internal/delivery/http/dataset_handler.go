@@ -165,6 +165,60 @@ func (h *DatasetHandler) ImportRetrievalCSV(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, stats)
 }
 
+// ImportNERJSONL bulk-loads span-annotated JSONL records:
+//
+//	{"text": "Acme paid $4,200 on 3 May.", "entities": [{"start":0,"end":4,"label":"ORG"}]}
+func (h *DatasetHandler) ImportNERJSONL(w http.ResponseWriter, r *http.Request, taskID string) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 20<<20)) // 20MB cap.
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read request body")
+		return
+	}
+
+	stats, err := h.uc.ImportNERJSONL(taskID, string(body))
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, stats)
+}
+
+// ImportCoNLL bulk-loads classic token-per-line BIO-tagged CoNLL content.
+func (h *DatasetHandler) ImportCoNLL(w http.ResponseWriter, r *http.Request, taskID string) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 20<<20)) // 20MB cap.
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read request body")
+		return
+	}
+
+	stats, err := h.uc.ImportCoNLL(taskID, string(body))
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, stats)
+}
+
+// ImportNERCSV bulk-loads span annotations from CSV (JSON-in-CSV, or flat
+// text,start,end,label columns).
+func (h *DatasetHandler) ImportNERCSV(w http.ResponseWriter, r *http.Request, taskID string) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 5<<20)) // 5MB cap.
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read request body")
+		return
+	}
+
+	stats, err := h.uc.ImportNERCSV(taskID, string(body))
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, stats)
+}
+
 // GenerateQueriesFromDocs bootstraps pair examples from docs-only examples
 // via the LLM adapter, tagging them as synthetic for human review.
 func (h *DatasetHandler) GenerateQueriesFromDocs(w http.ResponseWriter, r *http.Request, taskID string) {

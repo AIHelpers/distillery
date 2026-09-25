@@ -58,12 +58,8 @@ type TokenClassifierSchema struct{}
 
 // TokenClassifierPayload is the JSON shape for a token_classifier example.
 type TokenClassifierPayload struct {
-	Text     string `json:"text"`
-	Entities []struct {
-		Start int    `json:"start"`
-		End   int    `json:"end"`
-		Label string `json:"label"`
-	} `json:"entities"`
+	Text  string              `json:"text"`
+	Spans []domain.EntitySpan `json:"entities"`
 }
 
 // Kind implements domain.DatasetSchema.
@@ -82,14 +78,35 @@ func (s *TokenClassifierSchema) Validate(payload json.RawMessage) error {
 		return &schemaError{kind: domain.KindTokenClassifier, msg: "text is required"}
 	}
 
-	// Entities are optional — unlabeled text is a valid (neutral) sample.
+	// Entities are optional — unlabeled text is a valid (neutral) sample —
+	// but when present, every span must satisfy the NER span contract:
+	// in-bounds, end > start, non-overlapping, valid label.
+	if err := domain.ValidateEntitySpans(p.Text, p.Spans, nil); err != nil {
+		return &schemaError{kind: domain.KindTokenClassifier, msg: "invalid entity span: " + err.Error()}
+	}
 
 	return nil
 }
 
 // Stats implements domain.DatasetSchema.
 func (s *TokenClassifierSchema) Stats(examples []*domain.Example) domain.DatasetStats {
-	return classificationStats(domain.KindTokenClassifier, examples)
+	stats := genericStats(domain.KindTokenClassifier, examples)
+
+	stats.LabelBalance = map[string]int{}
+
+	for _, e := range examples {
+		var p TokenClassifierPayload
+
+		if len(e.Payload) > 0 && json.Unmarshal(e.Payload, &p) == nil {
+			for _, sp := range p.Spans {
+				if strings.TrimSpace(sp.Label) != "" && !e.Duplicate && !e.Flagged {
+					stats.LabelBalance[strings.TrimSpace(sp.Label)]++
+				}
+			}
+		}
+	}
+
+	return stats
 }
 
 // Formats implements domain.DatasetSchema.

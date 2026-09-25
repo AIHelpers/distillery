@@ -1,6 +1,8 @@
 package simulation
 
 import (
+	"encoding/json"
+	"sort"
 	"strings"
 
 	"distillery/internal/domain"
@@ -104,6 +106,136 @@ func (e *InferenceEngine) PredictClassification(
 		// Compare the same rounded score that is returned to callers.
 		BelowThreshold: Round2(conf) < threshold,
 	}, nil
+}
+
+// nerExample is the token_classifier payload shape stored on training examples.
+type nerExample struct {
+	Text     string              `json:"text"`
+	Entities []domain.EntitySpan `json:"entities"`
+}
+
+// PredictSpans implements domain.NERInferenceEngine. It reuses the same
+// nearest-neighbour approach as Predict: it finds the most similar training
+// example, then projects that example's entity *surface forms* onto the input
+// wherever they occur. This exercises the token_classifier API shape (labeled
+// char spans with scores) without requiring real trained weights.
+func (e *InferenceEngine) PredictSpans(
+	job *domain.TrainingJob,
+	trainingExamples []*domain.Example,
+	input string,
+	labelMap map[string]int,
+) (domain.NERPrediction, error) {
+	if len(trainingExamples) == 0 {
+		return domain.NERPrediction{Entities: []domain.Entity{}}, nil
+	}
+
+	inputTokens := tokenize(input)
+
+	// Find the nearest training example by token overlap.
+	var best *nerExample
+
+	bestScore := -1.0
+
+	for _, ex := range trainingExamples {
+		var p nerExample
+		if len(ex.Payload) == 0 || json.Unmarshal(ex.Payload, &p) != nil || p.Text == "" {
+			continue
+		}
+
+		score := jaccard(inputTokens, tokenize(p.Text))
+		if score > bestScore {
+			bestScore = score
+			cp := p
+			best = &cp
+		}
+	}
+
+	if best == nil {
+		return domain.NERPrediction{Entities: []domain.Entity{}}, nil
+	}
+
+	// Confidence blends similarity with the model's own entity F1 so it reads
+	// as a genuine model call.
+	baseConf := bestScore*0.5 + 0.5
+	if job.Metrics != nil && job.Metrics.EntityF1 > 0 {
+		baseConf = baseConf*0.5 + job.Metrics.EntityF1*0.5
+	}
+
+	if baseConf > 0.99 {
+		baseConf = 0.99
+	}
+
+	entities := make([]domain.Entity, 0, len(best.Entities))
+
+	for _, sp := range best.Entities {
+		if labelMap != nil {
+			if _, ok := labelMap[sp.Label]; !ok {
+				continue
+			}
+		}
+
+		surface := spanSurface(best.Text, sp)
+		if surface == "" {
+			continue
+		}
+
+		// Locate the surface form in the input (first occurrence, case-aware
+		// then case-insensitive) and emit a projected span.
+		idx := strings.Index(input, surface)
+		if idx < 0 {
+			lower := strings.ToLower(input)
+			idx = strings.Index(lower, strings.ToLower(surface))
+		}
+
+		if idx < 0 {
+			continue
+		}
+
+		entities = append(entities, domain.Entity{
+			Text:  input[idx : idx+len(surface)],
+			Label: sp.Label,
+			Start: idx,
+			End:   idx + len(surface),
+			Score: Round2(baseConf),
+		})
+	}
+
+	// Keep predictions in document order and non-overlapping.
+	sort.Slice(entities, func(i, j int) bool { return entities[i].Start < entities[j].Start })
+	entities = dropOverlaps(entities)
+
+	return domain.NERPrediction{Entities: entities}, nil
+}
+
+// spanSurface returns the substring of text covered by a (validated) span.
+func spanSurface(text string, sp domain.EntitySpan) string {
+	if sp.Start < 0 || sp.End > len(text) || sp.End <= sp.Start {
+		return ""
+	}
+
+	return text[sp.Start:sp.End]
+}
+
+// dropOverlaps removes later entities that overlap an earlier kept entity.
+func dropOverlaps(entities []domain.Entity) []domain.Entity {
+	out := make([]domain.Entity, 0, len(entities))
+
+	for _, e := range entities {
+		overlap := false
+
+		for _, kept := range out {
+			if e.Start < kept.End && kept.Start < e.End {
+				overlap = true
+				break
+			}
+		}
+
+		if !overlap {
+			out = append(out, e)
+		}
+	}
+
+	return out
 }
 
 // Embed implements domain.EmbeddingEngine by returning a deterministic

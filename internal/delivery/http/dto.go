@@ -33,6 +33,14 @@ type createTaskRequest struct {
 	Kind string `json:"kind"`
 }
 
+// updateTaskRequest is a partial update; omitted (nil) fields are unchanged.
+type updateTaskRequest struct {
+	Name        *string   `json:"name"`
+	Description *string   `json:"description"`
+	LabelSet    *[]string `json:"label_set"`
+	JSONSchema  *string   `json:"json_schema"`
+}
+
 type addExamplesRequest struct {
 	Pairs []struct {
 		Input  string `json:"input"`

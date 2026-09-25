@@ -418,6 +418,13 @@ func (l *LocalTrainer) readMetrics(ctx context.Context, jobDir string, runErr er
 		LabelMap   map[string]int                    `json:"label_map"`
 		Thresholds []domain.ThresholdSweepPoint      `json:"threshold_sweep"`
 
+		// NER metrics (token_classifier tasks).
+		EntityF1  float64                            `json:"entity_f1"`
+		EntityP   float64                            `json:"entity_precision"`
+		EntityR   float64                            `json:"entity_recall"`
+		PartialF1 float64                            `json:"partial_micro_f1"`
+		PerEntity map[string]domain.PerEntityMetrics `json:"per_entity"`
+
 		// Retrieval metrics (embedding/reranker tasks).
 		TunedNDCG10   float64 `json:"tuned_ndcg@10"`
 		TunedMRR10    float64 `json:"tuned_mrr@10"`
@@ -460,6 +467,13 @@ func (l *LocalTrainer) readMetrics(ctx context.Context, jobDir string, runErr er
 		DefaultThreshold: m.Threshold,
 		MaxLength:        m.MaxLength,
 		MultiLabel:       m.MultiLabel,
+		// NER fields propagate so the UI can render the per-entity P/R/F1
+		// table and the partial-match diagnostic.
+		EntityF1:  m.EntityF1,
+		EntityP:   m.EntityP,
+		EntityR:   m.EntityR,
+		PartialF1: m.PartialF1,
+		PerEntity: m.PerEntity,
 	}, nil
 }
 
@@ -647,6 +661,27 @@ func (l *LocalTrainer) writeJobConfig(
 		cfg["learning_rate"] = job.Reranker.LearningRate
 		cfg["batch_size"] = job.Reranker.BatchSize
 		cfg["grad_cache"] = job.Reranker.GradCache
+	}
+
+	// Pass NER (token_classifier) hyperparameters through to the worker when
+	// present.
+	if job.NER != nil {
+		cfg["max_length"] = job.NER.MaxLength
+		cfg["stride"] = job.NER.Stride
+
+		if job.NER.LabelScheme != "" {
+			cfg["label_scheme"] = job.NER.LabelScheme
+		}
+
+		cfg["epochs"] = job.NER.Epochs
+		cfg["learning_rate"] = job.NER.LearningRate
+		cfg["batch_size"] = job.NER.BatchSize
+	}
+
+	// Track B: pass the task's JSON schema to the worker so the SFT eval can
+	// report a JSON validity rate.
+	if job.JSONSchema != "" {
+		cfg["json_schema"] = job.JSONSchema
 	}
 
 	data, err := json.MarshalIndent(cfg, "", "  ")

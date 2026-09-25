@@ -86,4 +86,8 @@ type DatasetStats struct {
 	LabelBalance    map[string]int `json:"label_balance,omitempty"` // classification only.
 	ReadyToTrain    bool           `json:"ready_to_train"`
 	ReadinessReason string         `json:"readiness_reason,omitempty"`
+	// JSONValidRate is the fraction of examples whose output satisfies the
+	// task's JSON schema (Track B extraction tasks). 0 for tasks without a
+	// schema.
+	JSONValidRate float64 `json:"json_valid_rate,omitempty"`
 }

@@ -102,6 +102,9 @@ func registerTaskRoutes(mux *http.ServeMux, h Handlers) {
 	mux.HandleFunc("GET /api/v1/tasks/{taskID}", func(w http.ResponseWriter, r *http.Request) {
 		h.Task.Get(w, r, r.PathValue("taskID"))
 	})
+	mux.HandleFunc("PATCH /api/v1/tasks/{taskID}", func(w http.ResponseWriter, r *http.Request) {
+		h.Task.Update(w, r, r.PathValue("taskID"))
+	})
 	mux.HandleFunc("DELETE /api/v1/tasks/{taskID}", func(w http.ResponseWriter, r *http.Request) {
 		h.Task.Delete(w, r, r.PathValue("taskID"))
 	})
@@ -130,6 +133,15 @@ func registerTaskRoutes(mux *http.ServeMux, h Handlers) {
 	})
 	mux.HandleFunc("POST /api/v1/tasks/{taskID}/examples/generate-queries", func(w http.ResponseWriter, r *http.Request) {
 		h.Dataset.GenerateQueriesFromDocs(w, r, r.PathValue("taskID"))
+	})
+	mux.HandleFunc("POST /api/v1/tasks/{taskID}/examples/import-ner-jsonl", func(w http.ResponseWriter, r *http.Request) {
+		h.Dataset.ImportNERJSONL(w, r, r.PathValue("taskID"))
+	})
+	mux.HandleFunc("POST /api/v1/tasks/{taskID}/examples/import-conll", func(w http.ResponseWriter, r *http.Request) {
+		h.Dataset.ImportCoNLL(w, r, r.PathValue("taskID"))
+	})
+	mux.HandleFunc("POST /api/v1/tasks/{taskID}/examples/import-ner-csv", func(w http.ResponseWriter, r *http.Request) {
+		h.Dataset.ImportNERCSV(w, r, r.PathValue("taskID"))
 	})
 	mux.HandleFunc("PUT /api/v1/tasks/{taskID}/examples/{exampleID}", func(w http.ResponseWriter, r *http.Request) {
 		h.Dataset.UpdateExample(w, r, r.PathValue("taskID"), r.PathValue("exampleID"))

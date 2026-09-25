@@ -52,6 +52,12 @@ class Config:
     model_cache_dir: Optional[str] = None
     resume_from: Optional[str] = None
     seed: int = 42
+    # Track B: JSON schema the task's outputs must satisfy. When set, the SFT
+    # eval reports a "json validity rate" (fraction of held-out outputs that
+    # parse as JSON and satisfy the schema).
+    json_schema: Optional[str] = None
+    max_validation_samples: int = 50
+    max_new_tokens: int = 256
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "Config":
@@ -154,6 +160,91 @@ class DistilleryProgressCallback:
                 epoch=state.epoch,
                 loss=state.log_history[-1].get("loss") if state.log_history else None,
             )
+
+
+def _read_raw_records(path: Path) -> list[dict[str, Any]]:
+    """Read the raw (un-tokenized) JSONL records for output validation."""
+    records: list[dict[str, Any]] = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                records.append(json.loads(line))
+            except ValueError:
+                continue
+    return records
+
+
+def _load_json_schema_validator(schema_str: str):
+    """Build a validator for the schema string, preferring the `jsonschema`
+    package (full draft-07) and falling back to a JSON-parse check.
+
+    Returns a callable (output_text) -> bool.
+    """
+    try:
+        import jsonschema  # type: ignore
+
+        schema = json.loads(schema_str)
+        validator = jsonschema.Draft7Validator(schema)
+
+        def _validate(output: str) -> bool:
+            try:
+                doc = json.loads(output)
+            except (TypeError, ValueError):
+                return False
+            return validator.is_valid(doc)
+
+        return _validate
+    except Exception:
+        def _parse_only(output: str) -> bool:
+            try:
+                json.loads(output)
+                return True
+            except (TypeError, ValueError):
+                return False
+
+        return _parse_only
+
+
+def compute_json_validity_rate(
+    model,
+    tokenizer,
+    eval_records: list[dict[str, Any]],
+    schema_str: str,
+    max_samples: int,
+    max_new_tokens: int,
+    device: str,
+) -> float:
+    """Generate on a sample of held-out records and return the fraction whose
+    output is schema-valid JSON (Track B's "JSON validity rate" metric)."""
+    import torch
+
+    validator = _load_json_schema_validator(schema_str)
+    sample = eval_records[:max_samples]
+    if not sample:
+        return 0.0
+
+    valid = 0
+    model.eval()
+    with torch.no_grad():
+        for rec in sample:
+            instruction = rec.get("instruction", "")
+            inp = rec.get("input", "")
+            prompt = f"### Instruction\n{instruction}\n### Input\n{inp}\n### Output\n"
+            inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=1024).to(device)
+            out = model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                do_sample=False,
+                pad_token_id=tokenizer.pad_token_id,
+            )
+            text = tokenizer.decode(out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
+            if validator(text.strip()):
+                valid += 1
+
+    return round(valid / len(sample), 4)
 
 
 def save_metrics(output_dir: Path, metrics: dict[str, Any]):
@@ -302,6 +393,32 @@ def run(cfg: Config, writer: ProgressWriter, job_dir: Path, dataset_path: str) -
         if eval_ds is not None:
             eval_result = trainer.evaluate()
             final_metrics.update(eval_result)
+
+        # Track B: JSON validity rate over held-out outputs when a schema is
+        # present, so the UI can display a validity badge.
+        if cfg.json_schema:
+            try:
+                raw_records = _read_raw_records(Path(dataset_path))
+                if cfg.validation_split > 0 and raw_records:
+                    cut = max(1, int(len(raw_records) * (1 - cfg.validation_split)))
+                    held_out = raw_records[cut:]
+                else:
+                    held_out = raw_records
+
+                rate = compute_json_validity_rate(
+                    model,
+                    tokenizer,
+                    held_out,
+                    cfg.json_schema,
+                    cfg.max_validation_samples,
+                    cfg.max_new_tokens,
+                    "cuda" if torch.cuda.is_available() else "cpu",
+                )
+                final_metrics["json_validity_rate"] = rate
+                writer.event("json_validity", rate=rate)
+            except Exception as exc:  # noqa: BLE001
+                final_metrics["json_validity_rate"] = None
+                writer.event("json_validity", status="error", reason=str(exc))
 
         writer.event("complete", **final_metrics)  # final_metrics already carries status and kind
         save_metrics(job_dir, final_metrics)
