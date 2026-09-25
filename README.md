@@ -20,6 +20,7 @@ quantized LoRA on your own machine.
 - **Model stores** - manage base + trained model artifacts across local dirs, HuggingFace Hub, and S3 buckets.
 - **Real local QLoRA backend** - Go/Python worker contract drives real GPU fine-tuning (trainer/run.py) — implemented, not a stub.
 - **Production GGUF export** - sync or async; merge LoRA, convert, quantize, cached per job+quantization.
+- **Embedding & reranker models** - fine-tune sentence-embedding bi-encoders and cross-encoder rerankers on pairs/triplets/graded relevance; serve via `/embed` and `/rerank`, evaluate nDCG@10/MRR/recall base-vs-tuned, and export corpus vectors for any vector DB. See [docs/embeddings-rerankers.md](docs/embeddings-rerankers.md).
 - **Simulated demo backend** - `simulation` adapter (default) fakes training/inference so the whole flow works with no GPU. Clearly labeled in the code and UI. Switch to `local` for real training.
 
 ## Real fine-tuning backend
@@ -277,6 +278,9 @@ POST   /api/v1/tasks/{taskID}/deploy                  (deploy latest, returns on
 POST   /api/v1/tasks/{taskID}/training/{jobID}/deploy (deploy a specific version — rollback)
 POST   /api/v1/inference/{deploymentID}/predict       (requires API key)
 POST   /api/v1/inference/{deploymentID}/batch         (CSV/text in, CSV predictions out; requires API key)
+POST   /api/v1/inference/{deploymentID}/embed         (embedding model; requires API key)
+POST   /api/v1/inference/{deploymentID}/rerank        (reranker model; requires API key)
+POST   /api/v1/inference/{deploymentID}/embed-corpus  (embed a whole corpus, CSV out; requires API key)
 GET    /api/v1/tasks/{taskID}/export
 POST   /api/v1/tasks/{taskID}/feedback
 POST   /api/v1/tasks/{taskID}/feedback/fold

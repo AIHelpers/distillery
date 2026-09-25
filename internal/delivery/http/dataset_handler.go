@@ -129,6 +129,70 @@ func (h *DatasetHandler) DeleteExample(w http.ResponseWriter, _ *http.Request, t
 	writeJSON(w, http.StatusOK, stats)
 }
 
+// ImportRetrievalJSONL bulk-loads pair/triplet/graded JSONL records with
+// query-group holdout splitting.
+func (h *DatasetHandler) ImportRetrievalJSONL(w http.ResponseWriter, r *http.Request, taskID string) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 20<<20)) // 20MB cap.
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read request body")
+		return
+	}
+
+	stats, err := h.uc.ImportRetrievalJSONL(taskID, string(body))
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, stats)
+}
+
+// ImportRetrievalCSV bulk-loads pair/triplet/graded CSV records with
+// query-group holdout splitting.
+func (h *DatasetHandler) ImportRetrievalCSV(w http.ResponseWriter, r *http.Request, taskID string) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 5<<20)) // 5MB cap.
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read request body")
+		return
+	}
+
+	stats, err := h.uc.ImportRetrievalCSV(taskID, string(body))
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, stats)
+}
+
+// GenerateQueriesFromDocs bootstraps pair examples from docs-only examples
+// via the LLM adapter, tagging them as synthetic for human review.
+func (h *DatasetHandler) GenerateQueriesFromDocs(w http.ResponseWriter, r *http.Request, taskID string) {
+	var req generateSyntheticRequest
+
+	err := decodeJSON(r, &req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	if req.Count <= 0 {
+		req.Count = 10
+	}
+
+	if req.Count > 200 {
+		req.Count = 200
+	}
+
+	stats, err := h.uc.GenerateQueriesFromDocs(taskID, req.Count)
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, stats)
+}
+
 func (h *DatasetHandler) List(w http.ResponseWriter, _ *http.Request, taskID string) {
 	examples, err := h.uc.ListExamples(taskID)
 	if err != nil {

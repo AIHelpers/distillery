@@ -417,6 +417,20 @@ func (l *LocalTrainer) readMetrics(ctx context.Context, jobDir string, runErr er
 		ConfMatrix domain.ConfusionMatrix            `json:"confusion_matrix"`
 		LabelMap   map[string]int                    `json:"label_map"`
 		Thresholds []domain.ThresholdSweepPoint      `json:"threshold_sweep"`
+
+		// Retrieval metrics (embedding/reranker tasks).
+		TunedNDCG10   float64 `json:"tuned_ndcg@10"`
+		TunedMRR10    float64 `json:"tuned_mrr@10"`
+		TunedRecall1  float64 `json:"tuned_recall@1"`
+		TunedRecall5  float64 `json:"tuned_recall@5"`
+		TunedRecall10 float64 `json:"tuned_recall@10"`
+		BaseNDCG10    float64 `json:"base_ndcg@10"`
+		BaseMRR10     float64 `json:"base_mrr@10"`
+		BaseRecall1   float64 `json:"base_recall@1"`
+		BaseRecall5   float64 `json:"base_recall@5"`
+		BaseRecall10  float64 `json:"base_recall@10"`
+		EmbeddingDim  int     `json:"embedding_dim"`
+		IndexEstimate int64   `json:"index_size_estimate"`
 	}
 
 	err = json.Unmarshal(data, &m)
@@ -604,6 +618,37 @@ func (l *LocalTrainer) writeJobConfig(
 		cfg["threshold"] = job.Classifier.Threshold
 	}
 
+	// Pass embedding hyperparameters through to the worker when present.
+	if job.Embedding != nil {
+		cfg["max_seq_len"] = job.Embedding.MaxSeqLen
+		cfg["loss"] = job.Embedding.Loss
+		// Only pass hard_negatives when explicitly enabled, since the
+		// Python default is off.
+		if job.Embedding.HardNegatives {
+			cfg["hard_negatives"] = true
+		}
+
+		if len(job.Embedding.Matryoshka) > 0 {
+			cfg["matryoshka"] = job.Embedding.Matryoshka
+		}
+
+		cfg["epochs"] = job.Embedding.Epochs
+		cfg["learning_rate"] = job.Embedding.LearningRate
+		cfg["batch_size"] = job.Embedding.BatchSize
+		cfg["grad_cache"] = job.Embedding.GradCache
+		cfg["normalize"] = job.Embedding.Normalize
+	}
+
+	// Pass reranker hyperparameters through to the worker when present.
+	if job.Reranker != nil {
+		cfg["max_seq_len"] = job.Reranker.MaxSeqLen
+		cfg["loss"] = job.Reranker.Loss
+		cfg["epochs"] = job.Reranker.Epochs
+		cfg["learning_rate"] = job.Reranker.LearningRate
+		cfg["batch_size"] = job.Reranker.BatchSize
+		cfg["grad_cache"] = job.Reranker.GradCache
+	}
+
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
@@ -613,18 +658,31 @@ func (l *LocalTrainer) writeJobConfig(
 }
 
 // writeDataset writes the JSONL dataset file.
+//
+// For kinds backed by a typed Payload (embedding, reranker, classifier) the
+// raw Payload JSON is written verbatim so the Python worker receives the
+// query/positive/negative/document/label fields unmodified. Legacy causal_lm
+// examples fall back to instruction/output pairs.
 func (l *LocalTrainer) writeDataset(examples []*domain.Example, datasetPath string) error {
 	var sb strings.Builder
 
 	for _, ex := range examples {
-		rec := map[string]string{
-			"instruction": ex.Input,
-			"output":      ex.Output,
-		}
+		var line []byte
 
-		line, err := json.Marshal(rec)
-		if err != nil {
-			return err
+		if len(ex.Payload) > 0 {
+			line = ex.Payload
+		} else {
+			var err error
+
+			rec := map[string]string{
+				"instruction": ex.Input,
+				"output":      ex.Output,
+			}
+
+			line, err = json.Marshal(rec)
+			if err != nil {
+				return err
+			}
 		}
 
 		sb.Write(line)

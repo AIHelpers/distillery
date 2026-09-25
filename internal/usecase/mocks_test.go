@@ -372,6 +372,8 @@ type mockInferenceEngine struct {
 	confidence float64
 	predInput  string
 	predCount  int
+	embedding  domain.EmbeddingResult
+	rerank     domain.RerankResult
 }
 
 func (m *mockInferenceEngine) Predict(
@@ -383,6 +385,30 @@ func (m *mockInferenceEngine) Predict(
 	m.predCount++
 
 	return m.output, m.confidence
+}
+
+func (m *mockInferenceEngine) Embed(
+	_ *domain.TrainingJob,
+	_ []string,
+	_ string,
+) domain.EmbeddingResult {
+	if m.embedding.Dim == 0 {
+		return domain.EmbeddingResult{Dim: 768, Vectors: [][]float32{{0.1, 0.2}}}
+	}
+
+	return m.embedding
+}
+
+func (m *mockInferenceEngine) Rerank(
+	_ *domain.TrainingJob,
+	_ string,
+	_ []string,
+) domain.RerankResult {
+	if m.rerank.Ranking == nil {
+		return domain.RerankResult{Ranking: []domain.RerankItem{{Index: 0, Score: 0.9}}}
+	}
+
+	return m.rerank
 }
 
 // --- Mock Exporter ---.

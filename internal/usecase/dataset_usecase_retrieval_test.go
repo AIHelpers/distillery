@@ -1,0 +1,502 @@
+package usecase_test
+
+import (
+	"encoding/json"
+	"testing"
+
+	"distillery/internal/domain"
+)
+
+// --- ImportRetrievalJSONL ---.
+
+func TestDatasetUsecase_ImportRetrievalJSONL_Pairs(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Kind: domain.KindEmbedding}}
+	examples := &mockExampleRepo{}
+	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
+
+	content := "{\"query\":\"q1\",\"positive\":\"doc a\"}\n{\"query\":\"q2\",\"positive\":\"doc b\"}\n"
+
+	_, err := uc.ImportRetrievalJSONL("task_1", content)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if len(examples.addBatch) != 2 {
+		t.Fatalf("expected 2 examples, got %d", len(examples.addBatch))
+	}
+
+	// Each imported example must carry the typed pair payload.
+	var probe struct {
+		Query    string `json:"query"`
+		Positive string `json:"positive"`
+	}
+
+	if err := json.Unmarshal(examples.addBatch[0].Payload, &probe); err != nil {
+		t.Fatalf("payload not valid JSON: %v", err)
+	}
+
+	if probe.Query != "q1" || probe.Positive != "doc a" {
+		t.Errorf("unexpected pair payload: %+v", probe)
+	}
+
+	if examples.addBatch[0].Kind != domain.KindEmbedding {
+		t.Errorf("expected KindEmbedding, got %v", examples.addBatch[0].Kind)
+	}
+
+	if examples.addBatch[0].Source != domain.SourceUser {
+		t.Errorf("expected SourceUser, got %v", examples.addBatch[0].Source)
+	}
+}
+
+func TestDatasetUsecase_ImportRetrievalJSONL_Triplets(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Kind: domain.KindEmbedding}}
+	examples := &mockExampleRepo{}
+	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
+
+	content := "{\"query\":\"q1\",\"positive\":\"doc a\",\"negative\":\"doc n\"}\n"
+
+	_, err := uc.ImportRetrievalJSONL("task_1", content)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	var probe struct {
+		Query    string `json:"query"`
+		Positive string `json:"positive"`
+		Negative string `json:"negative"`
+	}
+
+	if err := json.Unmarshal(examples.addBatch[0].Payload, &probe); err != nil {
+		t.Fatalf("payload not valid JSON: %v", err)
+	}
+
+	if probe.Negative != "doc n" {
+		t.Errorf("expected negative 'doc n', got %q", probe.Negative)
+	}
+}
+
+func TestDatasetUsecase_ImportRetrievalJSONL_Graded(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Kind: domain.KindReranker}}
+	examples := &mockExampleRepo{}
+	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
+
+	content := "{\"query\":\"q1\",\"document\":\"doc a\",\"label\":0.8}\n"
+
+	_, err := uc.ImportRetrievalJSONL("task_1", content)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	var probe struct {
+		Query    string  `json:"query"`
+		Document string  `json:"document"`
+		Label    float64 `json:"label"`
+	}
+
+	if err := json.Unmarshal(examples.addBatch[0].Payload, &probe); err != nil {
+		t.Fatalf("payload not valid JSON: %v", err)
+	}
+
+	if probe.Query != "q1" || probe.Document != "doc a" || probe.Label != 0.8 {
+		t.Errorf("unexpected graded payload: %+v", probe)
+	}
+
+	if examples.addBatch[0].Kind != domain.KindReranker {
+		t.Errorf("expected KindReranker, got %v", examples.addBatch[0].Kind)
+	}
+}
+
+func TestDatasetUsecase_ImportRetrievalJSONL_DocsOnly(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Kind: domain.KindEmbedding}}
+	examples := &mockExampleRepo{}
+	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
+
+	content := "{\"document\":\"just a document\"}\n"
+
+	_, err := uc.ImportRetrievalJSONL("task_1", content)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	var probe struct {
+		Document string `json:"document"`
+	}
+
+	if err := json.Unmarshal(examples.addBatch[0].Payload, &probe); err != nil {
+		t.Fatalf("payload not valid JSON: %v", err)
+	}
+
+	if probe.Document != "just a document" {
+		t.Errorf("unexpected docs-only payload: %+v", probe)
+	}
+
+	// The group for docs-only rows is the document text; it should never be
+	// empty (so holdout splitting can anchor on it).
+	if examples.addBatch[0].FlagNote != "holdout:query_group" && examples.addBatch[0].FlagNote != "" {
+		t.Errorf("unexpected FlagNote %q, want empty or holdout marker", examples.addBatch[0].FlagNote)
+	}
+}
+
+func TestDatasetUsecase_ImportRetrievalJSONL_Empty(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Kind: domain.KindEmbedding}}
+	uc := newDatasetUsecase(tasks, &mockExampleRepo{}, &mockSynthGen{})
+
+	_, err := uc.ImportRetrievalJSONL("task_1", "{\"query\":\"q\"}\n") // no positive => invalid.
+	if err == nil {
+		t.Fatal("expected error for invalid retrieval record")
+	}
+}
+
+func TestDatasetUsecase_ImportRetrievalJSONL_BlankLinesAndGarbage(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Kind: domain.KindEmbedding}}
+	examples := &mockExampleRepo{}
+	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
+
+	content := "\n  \n{\"query\":\"q1\",\"positive\":\"doc a\"}\nnot json\n{\"query\":\"q2\",\"positive\":\"doc b\"}\n"
+
+	_, err := uc.ImportRetrievalJSONL("task_1", content)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if len(examples.addBatch) != 2 {
+		t.Errorf("expected 2 valid examples (garbage/blank skipped), got %d", len(examples.addBatch))
+	}
+}
+
+func TestDatasetUsecase_ImportRetrievalJSONL_TaskNotFound(t *testing.T) {
+	t.Parallel()
+
+	uc := newDatasetUsecase(&mockTaskRepo{}, &mockExampleRepo{}, &mockSynthGen{}) // no task => ErrNotFound.
+
+	_, err := uc.ImportRetrievalJSONL("missing", "{\"query\":\"q\",\"positive\":\"p\"}\n")
+	if err == nil {
+		t.Fatal("expected error for missing task")
+	}
+}
+
+// --- ImportRetrievalCSV ---.
+
+func TestDatasetUsecase_ImportRetrievalCSV_Pairs(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Kind: domain.KindEmbedding}}
+	examples := &mockExampleRepo{}
+	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
+
+	content := "query,positive\nq1,doc a\nq2,doc b\n"
+
+	_, err := uc.ImportRetrievalCSV("task_1", content)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if len(examples.addBatch) != 2 {
+		t.Fatalf("expected 2 examples, got %d", len(examples.addBatch))
+	}
+
+	var probe struct {
+		Query    string `json:"query"`
+		Positive string `json:"positive"`
+	}
+
+	if err := json.Unmarshal(examples.addBatch[0].Payload, &probe); err != nil {
+		t.Fatalf("payload not valid JSON: %v", err)
+	}
+
+	if probe.Query != "q1" || probe.Positive != "doc a" {
+		t.Errorf("unexpected pair payload: %+v", probe)
+	}
+}
+
+func TestDatasetUsecase_ImportRetrievalCSV_PositiveSynonyms(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Kind: domain.KindEmbedding}}
+	examples := &mockExampleRepo{}
+	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
+
+	// "doc_positive" and "hard_negative" are accepted column synonyms.
+	content := "query,doc_positive,hard_negative\nq1,doc a,doc n\n"
+
+	_, err := uc.ImportRetrievalCSV("task_1", content)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	var probe struct {
+		Query    string `json:"query"`
+		Positive string `json:"positive"`
+		Negative string `json:"negative"`
+	}
+
+	if err := json.Unmarshal(examples.addBatch[0].Payload, &probe); err != nil {
+		t.Fatalf("payload not valid JSON: %v", err)
+	}
+
+	if probe.Positive != "doc a" || probe.Negative != "doc n" {
+		t.Errorf("unexpected triplet payload: %+v", probe)
+	}
+}
+
+func TestDatasetUsecase_ImportRetrievalCSV_GradedLabel(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Kind: domain.KindReranker}}
+	examples := &mockExampleRepo{}
+	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
+
+	content := "query,document,label\nq1,doc a,1\nq2,doc b,0\n"
+
+	_, err := uc.ImportRetrievalCSV("task_1", content)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	var probe struct {
+		Query    string  `json:"query"`
+		Document string  `json:"document"`
+		Label    float64 `json:"label"`
+	}
+
+	if err := json.Unmarshal(examples.addBatch[1].Payload, &probe); err != nil {
+		t.Fatalf("payload not valid JSON: %v", err)
+	}
+
+	if probe.Query != "q2" || probe.Document != "doc b" || probe.Label != 0 {
+		t.Errorf("unexpected graded payload: %+v", probe)
+	}
+}
+
+func TestDatasetUsecase_ImportRetrievalCSV_NoHeaderFallback(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Kind: domain.KindEmbedding}}
+	examples := &mockExampleRepo{}
+	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
+
+	// No header: column 0 = query, column 1 = positive.
+	content := "q1,doc a\nq2,doc b\n"
+
+	_, err := uc.ImportRetrievalCSV("task_1", content)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	var probe struct {
+		Query    string `json:"query"`
+		Positive string `json:"positive"`
+	}
+
+	if err := json.Unmarshal(examples.addBatch[0].Payload, &probe); err != nil {
+		t.Fatalf("payload not valid JSON: %v", err)
+	}
+
+	if probe.Query != "q1" || probe.Positive != "doc a" {
+		t.Errorf("unexpected positional pair payload: %+v", probe)
+	}
+}
+
+func TestDatasetUsecase_ImportRetrievalCSV_Empty(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Kind: domain.KindEmbedding}}
+	uc := newDatasetUsecase(tasks, &mockExampleRepo{}, &mockSynthGen{})
+
+	_, err := uc.ImportRetrievalCSV("task_1", "")
+	if err == nil {
+		t.Fatal("expected error for empty CSV")
+	}
+}
+
+// --- Holdout split (query-group) ---.
+
+func TestDatasetUsecase_ImportRetrievalJSONL_HoldoutSplitIsDeterministic(t *testing.T) {
+	t.Parallel()
+
+	// Re-runs of the same data must assign the same examples to holdout, and
+	// the same query group must never straddle train/eval.
+	build := func() []*domain.Example {
+		tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Kind: domain.KindEmbedding}}
+		examples := &mockExampleRepo{}
+		uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
+
+		content := "{\"query\":\"q1\",\"positive\":\"d1a\"}\n" +
+			"{\"query\":\"q1\",\"positive\":\"d1b\"}\n" +
+			"{\"query\":\"q2\",\"positive\":\"d2a\"}\n" +
+			"{\"query\":\"q3\",\"positive\":\"d3a\"}\n" +
+			"{\"query\":\"q4\",\"positive\":\"d4a\"}\n" +
+			"{\"query\":\"q5\",\"positive\":\"d5a\"}\n"
+
+		if _, err := uc.ImportRetrievalJSONL("task_1", content); err != nil {
+			t.Fatalf("import failed: %v", err)
+		}
+
+		return examples.addBatch
+	}
+
+	first := build()
+	second := build()
+
+	if len(first) != len(second) {
+		t.Fatalf("run lengths differ: %d vs %d", len(first), len(second))
+	}
+
+	groups := map[string]string{} // group -> holdout state ("" or "holdout").
+
+	for i, e := range first {
+		var probe struct {
+			Query string `json:"query"`
+		}
+
+		_ = json.Unmarshal(e.Payload, &probe)
+
+		state := e.FlagNote
+		if state != "" && state != "holdout:query_group" {
+			t.Fatalf("unexpected flag note %q", state)
+		}
+
+		// Same group must keep the same holdout state across runs.
+		prev, ok := groups[probe.Query]
+		if !ok {
+			groups[probe.Query] = state
+		} else if prev != state {
+			t.Errorf("query group %q changed holdout state between runs (%q -> %q)", probe.Query, prev, state)
+		}
+
+		// Per-run consistency: the same query at index i must hold the same
+		// state on both runs.
+		if second[i].FlagNote != e.FlagNote {
+			t.Errorf("row %d holdout state differs between runs: %q vs %q", i, e.FlagNote, second[i].FlagNote)
+		}
+	}
+}
+
+// --- GenerateQueriesFromDocs ---.
+
+func TestDatasetUsecase_GenerateQueriesFromDocs_Valid(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Kind: domain.KindEmbedding}}
+	examples := &mockExampleRepo{
+		byTask: []*domain.Example{
+			{ID: "doc_1", Kind: domain.KindEmbedding, Source: domain.SourceUser, Payload: json.RawMessage(`{"document":"Reset your password"}`)},
+			{ID: "doc_2", Kind: domain.KindEmbedding, Source: domain.SourceUser, Payload: json.RawMessage(`{"document":"Enable two-factor auth"}`)},
+		},
+	}
+	// The generator emits a {"query","positive"} pair.
+	sg := &mockSynthGen{generated: []*domain.Example{{
+		Source:  domain.SourceSynthetic,
+		Payload: json.RawMessage(`{"query":"how do I reset?","positive":"Reset your password"}`),
+	}}}
+	uc := newDatasetUsecase(tasks, examples, sg)
+
+	_, err := uc.GenerateQueriesFromDocs("task_1", 1)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if len(examples.addBatch) != 1 {
+		t.Fatalf("expected 1 generated example, got %d", len(examples.addBatch))
+	}
+
+	if examples.addBatch[0].Source != domain.SourceUser {
+		t.Errorf("expected SourceUser (persisted after review), got %v", examples.addBatch[0].Source)
+	}
+
+	var probe struct {
+		Query    string `json:"query"`
+		Positive string `json:"positive"`
+	}
+
+	if err := json.Unmarshal(examples.addBatch[0].Payload, &probe); err != nil {
+		t.Fatalf("payload not valid JSON: %v", err)
+	}
+
+	if probe.Query != "how do I reset?" || probe.Positive != "Reset your password" {
+		t.Errorf("unexpected generated pair: %+v", probe)
+	}
+}
+
+func TestDatasetUsecase_GenerateQueriesFromDocs_BareQueryFallback(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Kind: domain.KindEmbedding}}
+	examples := &mockExampleRepo{
+		byTask: []*domain.Example{
+			{ID: "doc_1", Kind: domain.KindEmbedding, Source: domain.SourceUser, Payload: json.RawMessage(`{"document":"Enable two-factor auth"}`)},
+		},
+	}
+	// Generator emits a bare query via Input/Output (legacy shape); it must be
+	// normalized into a {"query","positive"} pair using the source document.
+	sg := &mockSynthGen{generated: []*domain.Example{{
+		Source: domain.SourceSynthetic,
+		Input:  "how do I enable 2fa?",
+		Output: "Enable two-factor auth",
+	}}}
+	uc := newDatasetUsecase(tasks, examples, sg)
+
+	_, err := uc.GenerateQueriesFromDocs("task_1", 1)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	var probe struct {
+		Query    string `json:"query"`
+		Positive string `json:"positive"`
+	}
+
+	if err := json.Unmarshal(examples.addBatch[0].Payload, &probe); err != nil {
+		t.Fatalf("payload not valid JSON: %v", err)
+	}
+
+	if probe.Query != "how do I enable 2fa?" || probe.Positive != "Enable two-factor auth" {
+		t.Errorf("unexpected normalized pair: %+v", probe)
+	}
+}
+
+func TestDatasetUsecase_GenerateQueriesFromDocs_NoDocs(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Kind: domain.KindEmbedding}}
+	examples := &mockExampleRepo{byTask: []*domain.Example{
+		{ID: "pair_1", Kind: domain.KindEmbedding, Source: domain.SourceUser, Payload: json.RawMessage(`{"query":"q","positive":"p"}`)},
+	}}
+	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
+
+	_, err := uc.GenerateQueriesFromDocs("task_1", 1)
+	if err == nil {
+		t.Fatal("expected error when no docs-only examples exist")
+	}
+}
+
+func TestDatasetUsecase_GenerateQueriesFromDocs_SkipsNonPairOutput(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Kind: domain.KindEmbedding}}
+	examples := &mockExampleRepo{
+		byTask: []*domain.Example{
+			{ID: "doc_1", Kind: domain.KindEmbedding, Source: domain.SourceUser, Payload: json.RawMessage(`{"document":"Reset your password"}`)},
+		},
+	}
+	// Generator returns an unusable example (empty fields) — must be skipped.
+	sg := &mockSynthGen{generated: []*domain.Example{{Source: domain.SourceSynthetic}}}
+	uc := newDatasetUsecase(tasks, examples, sg)
+
+	_, err := uc.GenerateQueriesFromDocs("task_1", 1)
+	if err == nil {
+		t.Fatal("expected error when all generated outputs are unusable")
+	}
+}

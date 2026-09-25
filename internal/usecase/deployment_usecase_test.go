@@ -1054,3 +1054,167 @@ func TestDeploymentUsecase_Export_ExporterError(t *testing.T) {
 		t.Errorf("expected errRepoFailure, got %v", err)
 	}
 }
+
+// --- Embed ---.
+
+func TestDeploymentUsecase_Embed_Success(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
+	jobs := &mockTrainingRepo{
+		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
+		job:             &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
+	}
+	deployments := &mockDeploymentRepo{}
+	engine := &mockInferenceEngine{
+		embedding: domain.EmbeddingResult{Dim: 768, Vectors: [][]float32{{0.1, 0.2, 0.3}}},
+	}
+	uc := newDeploymentUsecase(tasks, jobs, &mockExampleRepo{}, deployments, engine, &mockExporter{})
+
+	d, rawKey, err := uc.Deploy("task_1", false)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	result, err := uc.Embed(d.ID, rawKey, []string{"text a", "text b"}, "query")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if result.Dim != 768 {
+		t.Errorf("expected dim 768, got %d", result.Dim)
+	}
+
+	if len(result.Vectors) != 1 {
+		t.Errorf("expected 1 vector, got %d", len(result.Vectors))
+	}
+
+	if d.RequestCount != 2 {
+		t.Errorf("expected request count 2, got %d", d.RequestCount)
+	}
+}
+
+func TestDeploymentUsecase_Embed_DeploymentNotFound(t *testing.T) {
+	t.Parallel()
+
+	uc := newDeploymentUsecase(
+		&mockTaskRepo{},
+		&mockTrainingRepo{},
+		&mockExampleRepo{},
+		&mockDeploymentRepo{},
+		&mockInferenceEngine{},
+		&mockExporter{},
+	)
+
+	_, err := uc.Embed("missing", "key", []string{"text"}, "query")
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+func TestDeploymentUsecase_Embed_Unauthorized(t *testing.T) {
+	t.Parallel()
+
+	deployments := &mockDeploymentRepo{
+		getDeployment: &domain.Deployment{ID: "dep_1", Status: domain.DeploymentActive, APIKeyHash: "hash", TaskID: "", TrainingJobID: "", Endpoint: "", Autoscale: false, RequestCount: 0, CreatedAt: time.Time{}},
+	}
+	uc := newDeploymentUsecase(
+		&mockTaskRepo{},
+		&mockTrainingRepo{},
+		&mockExampleRepo{},
+		deployments,
+		&mockInferenceEngine{},
+		&mockExporter{},
+	)
+
+	_, err := uc.Embed("dep_1", "wrongkey", []string{"text"}, "query")
+	if !errors.Is(err, domain.ErrUnauthorized) {
+		t.Errorf("expected ErrUnauthorized, got %v", err)
+	}
+}
+
+// --- Rerank ---.
+
+func TestDeploymentUsecase_Rerank_Success(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
+	jobs := &mockTrainingRepo{
+		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
+		job:             &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
+	}
+	deployments := &mockDeploymentRepo{}
+	engine := &mockInferenceEngine{
+		rerank: domain.RerankResult{Ranking: []domain.RerankItem{{Index: 1, Score: 0.92}, {Index: 0, Score: 0.5}}},
+	}
+	uc := newDeploymentUsecase(tasks, jobs, &mockExampleRepo{}, deployments, engine, &mockExporter{})
+
+	d, rawKey, err := uc.Deploy("task_1", false)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	result, err := uc.Rerank(d.ID, rawKey, "query", []string{"doc a", "doc b"}, 0)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if len(result.Ranking) != 2 {
+		t.Fatalf("expected 2 rankings, got %d", len(result.Ranking))
+	}
+
+	if result.Ranking[0].Index != 1 || result.Ranking[0].Score != 0.92 {
+		t.Errorf("expected first ranking index 1 score 0.92, got %d/%f", result.Ranking[0].Index, result.Ranking[0].Score)
+	}
+
+	if d.RequestCount != 1 {
+		t.Errorf("expected request count 1, got %d", d.RequestCount)
+	}
+}
+
+func TestDeploymentUsecase_Rerank_TopK(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
+	jobs := &mockTrainingRepo{
+		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
+		job:             &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
+	}
+	deployments := &mockDeploymentRepo{}
+	engine := &mockInferenceEngine{
+		rerank: domain.RerankResult{Ranking: []domain.RerankItem{{Index: 0, Score: 0.9}, {Index: 1, Score: 0.8}, {Index: 2, Score: 0.7}}},
+	}
+	uc := newDeploymentUsecase(tasks, jobs, &mockExampleRepo{}, deployments, engine, &mockExporter{})
+
+	d, rawKey, err := uc.Deploy("task_1", false)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	result, err := uc.Rerank(d.ID, rawKey, "query", []string{"doc a", "doc b", "doc c"}, 2)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if len(result.Ranking) != 2 {
+		t.Errorf("expected 2 rankings due to top_k, got %d", len(result.Ranking))
+	}
+}
+
+func TestDeploymentUsecase_Rerank_DeploymentNotFound(t *testing.T) {
+	t.Parallel()
+
+	uc := newDeploymentUsecase(
+		&mockTaskRepo{},
+		&mockTrainingRepo{},
+		&mockExampleRepo{},
+		&mockDeploymentRepo{},
+		&mockInferenceEngine{},
+		&mockExporter{},
+	)
+
+	_, err := uc.Rerank("missing", "key", "query", []string{"doc"}, 0)
+	if !errors.Is(err, domain.ErrNotFound) {
+		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}

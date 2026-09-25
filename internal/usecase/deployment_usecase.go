@@ -1,12 +1,16 @@
 package usecase
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/csv"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -140,6 +144,207 @@ type BatchResult struct {
 	Input      string
 	Output     string
 	Confidence float64
+}
+
+// Embed encodes a list of texts with the deployed embedding model. It only
+// works for deployments whose kind is KindEmbedding.
+func (u *DeploymentUsecase) Embed(deploymentID, apiKey string, inputs []string, embedType string) (domain.EmbeddingResult, error) {
+	d, err := u.deployments.Get(deploymentID)
+	if err != nil {
+		return domain.EmbeddingResult{}, err
+	}
+
+	err = u.authorize(d, apiKey)
+	if err != nil {
+		return domain.EmbeddingResult{}, err
+	}
+
+	if d.Status != domain.DeploymentActive {
+		return domain.EmbeddingResult{}, domain.ErrNoDeployment
+	}
+
+	engine, ok := u.engine.(domain.EmbeddingEngine)
+	if !ok || engine == nil {
+		return domain.EmbeddingResult{}, errors.New("deployment is not an embedding model")
+	}
+
+	job, err := u.jobs.Get(d.TrainingJobID)
+	if err != nil {
+		return domain.EmbeddingResult{}, err
+	}
+
+	// Normalize the type to one of the two supported prefixes.
+	if embedType != "document" {
+		embedType = "query"
+	}
+
+	result := engine.Embed(job, inputs, embedType)
+
+	d.RequestCount += len(inputs)
+	_ = u.deployments.Update(d)
+
+	return result, nil
+}
+
+// EmbedCorpus is the "embed my corpus" batch job: it collects every usable
+// docs-only example for the deployment's task, embeds each document with the
+// deployed embedding model, and returns the vectors as a CSV so users can load
+// them into any vector DB (Distillery does not become a vector database).
+// The returned job records progress/state; the bytes are the CSV payload.
+func (u *DeploymentUsecase) EmbedCorpus(deploymentID, apiKey string) (*domain.CorpusEmbedJob, []byte, error) {
+	d, err := u.deployments.Get(deploymentID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	err = u.authorize(d, apiKey)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if d.Status != domain.DeploymentActive {
+		return nil, nil, domain.ErrNoDeployment
+	}
+
+	engine, ok := u.engine.(domain.EmbeddingEngine)
+	if !ok || engine == nil {
+		return nil, nil, errors.New("deployment is not an embedding model")
+	}
+
+	job, err := u.jobs.Get(d.TrainingJobID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	examples, err := u.usableExamples(d.TaskID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Keep only docs-only rows; skip pair/triplet/graded rows (they aren't
+	// standalone corpus documents).
+	docTexts := make([]string, 0, len(examples))
+	for _, e := range examples {
+		if !isDocsOnlyPayload(e.Payload) {
+			continue
+		}
+
+		var p struct {
+			Document string `json:"document"`
+		}
+
+		_ = json.Unmarshal(e.Payload, &p)
+
+		if strings.TrimSpace(p.Document) != "" {
+			docTexts = append(docTexts, strings.TrimSpace(p.Document))
+		}
+	}
+
+	if len(docTexts) == 0 {
+		return nil, nil, errors.New("no docs-only examples found; import a corpus first (e.g. {\"document\": \"...\"})")
+	}
+
+	now := time.Now().UTC()
+
+	embedJob := &domain.CorpusEmbedJob{
+		ID:            u.idGen.NewID("ce"),
+		DeploymentID:  deploymentID,
+		TrainingJobID: job.ID,
+		TaskID:        d.TaskID,
+		Status:        domain.TrainingRunning,
+		TotalDocs:     len(docTexts),
+		DoneDocs:      0,
+		CreatedAt:     now,
+		StartedAt:     &now,
+	}
+
+	// Embed every document at once (batching handled by the engine).
+	result := engine.Embed(job, docTexts, "document")
+
+	if len(result.Vectors) != len(docTexts) {
+		return nil, nil, errors.New("embedding engine returned a mismatched vector count")
+	}
+
+	// Write CSV: text, then one column per vector component.
+	var buf bytes.Buffer
+
+	cw := csv.NewWriter(&buf)
+
+	header := make([]string, 0, result.Dim+1)
+	header = append(header, "text")
+
+	for i := range result.Dim {
+		header = append(header, "dim_"+strconv.Itoa(i))
+	}
+
+	_ = cw.Write(header)
+
+	for i, text := range docTexts {
+		row := make([]string, 0, result.Dim+1)
+		row = append(row, text)
+
+		for _, v := range result.Vectors[i] {
+			row = append(row, strconv.FormatFloat(float64(v), 'g', -1, 32))
+		}
+
+		_ = cw.Write(row)
+	}
+
+	cw.Flush()
+
+	if err := cw.Error(); err != nil {
+		return nil, nil, err
+	}
+
+	done := time.Now().UTC()
+	embedJob.Status = domain.TrainingCompleted
+	embedJob.DoneDocs = len(docTexts)
+	embedJob.CompletedAt = &done
+
+	d.RequestCount += len(docTexts)
+	_ = u.deployments.Update(d)
+
+	return embedJob, buf.Bytes(), nil
+}
+
+// Rerank scores a query against a list of documents with the deployed
+// reranker model. It only works for deployments whose kind is KindReranker.
+func (u *DeploymentUsecase) Rerank(deploymentID, apiKey, query string, documents []string, topK int) (domain.RerankResult, error) {
+	d, err := u.deployments.Get(deploymentID)
+	if err != nil {
+		return domain.RerankResult{}, err
+	}
+
+	err = u.authorize(d, apiKey)
+	if err != nil {
+		return domain.RerankResult{}, err
+	}
+
+	if d.Status != domain.DeploymentActive {
+		return domain.RerankResult{}, domain.ErrNoDeployment
+	}
+
+	engine, ok := u.engine.(domain.RerankerInferenceEngine)
+	if !ok || engine == nil {
+		return domain.RerankResult{}, errors.New("deployment is not a reranker model")
+	}
+
+	job, err := u.jobs.Get(d.TrainingJobID)
+	if err != nil {
+		return domain.RerankResult{}, err
+	}
+
+	result := engine.Rerank(job, query, documents)
+
+	// Apply top_k truncation when requested.
+	if topK > 0 && len(result.Ranking) > topK {
+		result.Ranking = result.Ranking[:topK]
+	}
+
+	d.RequestCount++
+	_ = u.deployments.Update(d)
+
+	return result, nil
 }
 
 // InvokeBatch runs prediction over many inputs in one authorized call —

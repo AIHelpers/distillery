@@ -122,6 +122,15 @@ func registerTaskRoutes(mux *http.ServeMux, h Handlers) {
 	mux.HandleFunc("POST /api/v1/tasks/{taskID}/examples/import-jsonl", func(w http.ResponseWriter, r *http.Request) {
 		h.Dataset.ImportJSONL(w, r, r.PathValue("taskID"))
 	})
+	mux.HandleFunc("POST /api/v1/tasks/{taskID}/examples/import-retrieval-jsonl", func(w http.ResponseWriter, r *http.Request) {
+		h.Dataset.ImportRetrievalJSONL(w, r, r.PathValue("taskID"))
+	})
+	mux.HandleFunc("POST /api/v1/tasks/{taskID}/examples/import-retrieval-csv", func(w http.ResponseWriter, r *http.Request) {
+		h.Dataset.ImportRetrievalCSV(w, r, r.PathValue("taskID"))
+	})
+	mux.HandleFunc("POST /api/v1/tasks/{taskID}/examples/generate-queries", func(w http.ResponseWriter, r *http.Request) {
+		h.Dataset.GenerateQueriesFromDocs(w, r, r.PathValue("taskID"))
+	})
 	mux.HandleFunc("PUT /api/v1/tasks/{taskID}/examples/{exampleID}", func(w http.ResponseWriter, r *http.Request) {
 		h.Dataset.UpdateExample(w, r, r.PathValue("taskID"), r.PathValue("exampleID"))
 	})
@@ -189,6 +198,15 @@ func registerDeploymentRoutes(mux *http.ServeMux, h Handlers) {
 	})
 	mux.HandleFunc("POST /api/v1/inference/{deploymentID}/predict", func(w http.ResponseWriter, r *http.Request) {
 		h.Deployment.Invoke(w, r, r.PathValue("deploymentID"))
+	})
+	mux.HandleFunc("POST /api/v1/inference/{deploymentID}/embed", func(w http.ResponseWriter, r *http.Request) {
+		h.Deployment.Embed(w, r, r.PathValue("deploymentID"))
+	})
+	mux.HandleFunc("POST /api/v1/inference/{deploymentID}/rerank", func(w http.ResponseWriter, r *http.Request) {
+		h.Deployment.Rerank(w, r, r.PathValue("deploymentID"))
+	})
+	mux.HandleFunc("POST /api/v1/inference/{deploymentID}/embed-corpus", func(w http.ResponseWriter, r *http.Request) {
+		h.Deployment.EmbedCorpus(w, r, r.PathValue("deploymentID"))
 	})
 	mux.HandleFunc("POST /api/v1/inference/{deploymentID}/batch", func(w http.ResponseWriter, r *http.Request) {
 		h.Deployment.InvokeBatch(w, r, r.PathValue("deploymentID"))

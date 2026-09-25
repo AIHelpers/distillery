@@ -57,6 +57,22 @@ type invokeRequest struct {
 	Input string `json:"input"`
 }
 
+// embedRequest is the body of POST /inference/{id}/embed.
+type embedRequest struct {
+	// Input is the list of texts to embed.
+	Input []string `json:"input"`
+	// Type selects the encode-time prefix: "query" or "document". Empty
+	// defaults to "query".
+	Type string `json:"type,omitempty"`
+}
+
+// rerankRequest is the body of POST /inference/{id}/rerank.
+type rerankRequest struct {
+	Query     string   `json:"query"`
+	Documents []string `json:"documents"`
+	TopK      int      `json:"top_k,omitempty"`
+}
+
 type mispredictionRequest struct {
 	Input          string `json:"input"`
 	ActualOutput   string `json:"actual_output"`

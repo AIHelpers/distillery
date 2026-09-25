@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"distillery/internal/domain"
@@ -108,6 +109,83 @@ func (h *DeploymentHandler) Invoke(w http.ResponseWriter, r *http.Request, deplo
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"output":     output,
 		"confidence": confidence,
+	})
+}
+
+// Embed serves the deployed embedding model. POST /inference/{id}/embed.
+func (h *DeploymentHandler) Embed(w http.ResponseWriter, r *http.Request, deploymentID string) {
+	var req embedRequest
+
+	err := decodeJSON(r, &req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	if len(req.Input) == 0 {
+		writeError(w, http.StatusBadRequest, "\"input\" must be a non-empty list of texts")
+		return
+	}
+
+	result, err := h.uc.Embed(deploymentID, apiKeyFromRequest(r), req.Input, req.Type)
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"kind":   "embedding",
+		"result": result,
+	})
+}
+
+// EmbedCorpus serves the "embed my corpus" batch job. POST /inference/{id}/embed-corpus.
+func (h *DeploymentHandler) EmbedCorpus(w http.ResponseWriter, r *http.Request, deploymentID string) {
+	job, data, err := h.uc.EmbedCorpus(deploymentID, apiKeyFromRequest(r))
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/csv")
+	w.Header().Set("Content-Disposition", `attachment; filename="corpus_embeddings.csv"`)
+	_, _ = w.Write(data)
+
+	// The job metadata is not streamed in the CSV; expose it in a response
+	// header so the client can correlate the run.
+	w.Header().Set("X-Corpus-Job-ID", job.ID)
+	w.Header().Set("X-Corpus-Docs", strconv.Itoa(job.DoneDocs))
+}
+
+// Rerank serves the deployed reranker model. POST /inference/{id}/rerank.
+func (h *DeploymentHandler) Rerank(w http.ResponseWriter, r *http.Request, deploymentID string) {
+	var req rerankRequest
+
+	err := decodeJSON(r, &req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	if strings.TrimSpace(req.Query) == "" {
+		writeError(w, http.StatusBadRequest, "\"query\" must be a non-empty string")
+		return
+	}
+
+	if len(req.Documents) == 0 {
+		writeError(w, http.StatusBadRequest, "\"documents\" must be a non-empty list")
+		return
+	}
+
+	result, err := h.uc.Rerank(deploymentID, apiKeyFromRequest(r), req.Query, req.Documents, req.TopK)
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"kind":   "reranker",
+		"result": result,
 	})
 }
 

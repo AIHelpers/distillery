@@ -47,6 +47,20 @@ type InferenceEngine interface {
 	Predict(job *TrainingJob, trainingExamples []*Example, input string) (output string, confidence float64)
 }
 
+// EmbeddingEngine serves embedding vectors from a deployed embedding model.
+type EmbeddingEngine interface {
+	// Embed returns a normalized vector per input. embedType selects the
+	// encode-time prefix ("query" or "document").
+	Embed(job *TrainingJob, inputs []string, embedType string) EmbeddingResult
+}
+
+// RerankerInferenceEngine serves a deployed cross-encoder reranker.
+type RerankerInferenceEngine interface {
+	// Rerank scores each document against the query and returns a ranked list
+	// of indices into the documents slice.
+	Rerank(job *TrainingJob, query string, documents []string) RerankResult
+}
+
 // Exporter builds a portable, self-hostable export package for a trained model.
 type Exporter interface {
 	// BuildExport returns the bytes of a downloadable archive (e.g. zip)
