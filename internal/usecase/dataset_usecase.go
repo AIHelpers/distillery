@@ -286,13 +286,53 @@ func (u *DatasetUsecase) Curate(taskID string) (*domain.DatasetStats, error) {
 	stats.UsableCount = stats.Total - stats.Duplicates - stats.Flagged
 	stats.ReadyToTrain, stats.ReadinessReason = readiness(task, stats)
 
+	// Track B: when the task declares a JSON schema, report the fraction of
+	// usable examples whose output satisfies it.
+	if schema := strings.TrimSpace(task.JSONSchema); schema != "" {
+		stats.JSONValidRate = jsonValidRate(schema, list)
+	}
+
 	return stats, nil
+}
+
+// jsonValidRate returns the fraction of usable examples whose output parses
+// as JSON and satisfies the task schema.
+func jsonValidRate(schema string, examples []*domain.Example) float64 {
+	checked, valid := 0, 0
+
+	for _, e := range examples {
+		if e.Duplicate || e.Flagged {
+			continue
+		}
+
+		out := strings.TrimSpace(e.Output)
+		if out == "" {
+			continue
+		}
+
+		checked++
+
+		if domain.ValidateJSONAgainstSchema(schema, out) == nil {
+			valid++
+		}
+	}
+
+	if checked == 0 {
+		return 0
+	}
+
+	return float64(valid) / float64(checked)
 }
 
 // curationKey derives a dedup key from an example. Legacy text-only kinds use
 // the Input/Output fields; retrieval kinds (embedding/reranker) use the query
-// text plus the positive/document text so identical pairs are collapsed.
+// text plus the positive/document text so identical pairs are collapsed. NER
+// kinds key on the example text (spans don't affect identity).
 func curationKey(e *domain.Example) string {
+	if text, ok := nerPayloadText(e); ok {
+		return "ner:" + strings.ToLower(text)
+	}
+
 	query, positive, negative, doc := payloadFields(e)
 
 	switch {
@@ -307,6 +347,34 @@ func curationKey(e *domain.Example) string {
 	default:
 		return strings.ToLower(strings.TrimSpace(e.Input))
 	}
+}
+
+// nerPayloadText extracts the "text" field from a token_classifier payload.
+// It returns ok=false for non-NER payloads.
+func nerPayloadText(e *domain.Example) (string, bool) {
+	if len(e.Payload) == 0 {
+		return "", false
+	}
+
+	var probe struct {
+		Text string `json:"text"`
+	}
+
+	if json.Unmarshal(e.Payload, &probe) != nil || probe.Text == "" {
+		return "", false
+	}
+
+	// Distinguish NER payloads from other shapes that happen to carry "text"
+	// by requiring at least an entities array (possibly empty).
+	var spans struct {
+		Entities []json.RawMessage `json:"entities"`
+	}
+
+	if json.Unmarshal(e.Payload, &spans) != nil {
+		return "", false
+	}
+
+	return probe.Text, true
 }
 
 func payloadFields(e *domain.Example) (query, positive, negative, doc string) {
@@ -344,6 +412,15 @@ func qualityFlag(e *domain.Example) (flagged bool, note string) {
 
 		if strings.EqualFold(strings.TrimSpace(e.Input), strings.TrimSpace(e.Output)) {
 			return true, "input and output are identical"
+		}
+
+		return false, ""
+	}
+
+	// NER kind (typed Payload with text/entities present).
+	if text, ok := nerPayloadText(e); ok {
+		if len(strings.TrimSpace(text)) < minInputLen {
+			return true, "text too short"
 		}
 
 		return false, ""

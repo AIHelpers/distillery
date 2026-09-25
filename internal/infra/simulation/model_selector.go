@@ -157,6 +157,64 @@ func NewModelSelector() *ModelSelector {
 				},
 			},
 
+			// --- Token classifiers (NER/span tagging; small encoders) ---.
+			{
+				Name:           "DistilBERT-base",
+				ParamsBillions: 0.067,
+				Family:         "DistilBERT",
+				RepoID:         "distilbert-base-uncased",
+				Kind:           domain.KindTokenClassifier,
+				Capabilities: domain.Capabilities{
+					SupportsLoRA:  true,
+					ExportFormats: []string{"onnx", "safetensors"},
+					RunsOnCPU:     true,
+					MaxSeqLen:     512,
+					Languages:     []string{"en"},
+				},
+			},
+			{
+				Name:           "RoBERTa-base",
+				ParamsBillions: 0.125,
+				Family:         "RoBERTa",
+				RepoID:         "roberta-base",
+				Kind:           domain.KindTokenClassifier,
+				Capabilities: domain.Capabilities{
+					SupportsLoRA:  true,
+					ExportFormats: []string{"onnx", "safetensors"},
+					RunsOnCPU:     true,
+					MaxSeqLen:     512,
+					Languages:     []string{"en"},
+				},
+			},
+			{
+				Name:           "DeBERTa-v3-base",
+				ParamsBillions: 0.184,
+				Family:         "DeBERTa",
+				RepoID:         "microsoft/deberta-v3-base",
+				Kind:           domain.KindTokenClassifier,
+				Capabilities: domain.Capabilities{
+					SupportsLoRA:  true,
+					ExportFormats: []string{"onnx", "safetensors"},
+					RunsOnCPU:     true,
+					MaxSeqLen:     512,
+					Languages:     []string{"en"},
+				},
+			},
+			{
+				Name:           "XLM-RoBERTa-base",
+				ParamsBillions: 0.279,
+				Family:         "XLM-RoBERTa",
+				RepoID:         "FacebookAI/xlm-roberta-base",
+				Kind:           domain.KindTokenClassifier,
+				Capabilities: domain.Capabilities{
+					SupportsLoRA:  true,
+					ExportFormats: []string{"onnx", "safetensors"},
+					RunsOnCPU:     true,
+					MaxSeqLen:     512,
+					Languages:     []string{"multilingual"},
+				},
+			},
+
 			// --- Embedding models (bi-encoders) ---.
 			{
 				Name:           "bge-small-en-v1.5",

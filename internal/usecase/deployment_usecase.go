@@ -89,6 +89,22 @@ func (u *DeploymentUsecase) GetActiveDeployment(taskID string) (*domain.Deployme
 	return u.deployments.GetActiveForTask(taskID)
 }
 
+// DeploymentKind returns the architectural model kind of a deployment so the
+// HTTP layer can shape the inference response per kind. Pre-kind records
+// default to causal_lm.
+func (u *DeploymentUsecase) DeploymentKind(id string) (domain.ModelKind, error) {
+	d, err := u.deployments.Get(id)
+	if err != nil {
+		return "", err
+	}
+
+	if d.Kind == "" {
+		return domain.DefaultModelKind, nil
+	}
+
+	return d.Kind, nil
+}
+
 func (u *DeploymentUsecase) ListDeployments(taskID string) ([]*domain.Deployment, error) {
 	return u.deployments.ListByTask(taskID)
 }
@@ -137,6 +153,169 @@ func (u *DeploymentUsecase) Invoke(deploymentID, apiKey, input string) (output s
 	_ = u.deployments.Update(d)
 
 	return output, confidence, nil
+}
+
+// InvokeStructured runs the deployed endpoint with schema-constrained decoding
+// for Track B extraction tasks. When the task declares a JSON schema and the
+// configured engine supports grammar-constrained generation, a GBNF grammar is
+// generated from the schema and passed to the backend so the output is
+// guaranteed to be schema-valid JSON. For tasks without a schema (or engines
+// without support) it degrades to the plain Invoke path.
+func (u *DeploymentUsecase) InvokeStructured(deploymentID, apiKey, input string) (output string, confidence float64, constrained bool, err error) {
+	d, err := u.deployments.Get(deploymentID)
+	if err != nil {
+		return "", 0, false, err
+	}
+
+	task, err := u.tasks.Get(d.TaskID)
+	if err != nil {
+		return "", 0, false, err
+	}
+
+	grammar := domain.GenerateGBNF(task.JSONSchema)
+
+	engine, ok := u.engine.(domain.ConstrainedInferenceEngine)
+	if grammar == "" || !ok || engine == nil {
+		out, conf, err := u.Invoke(deploymentID, apiKey, input)
+
+		return out, conf, false, err
+	}
+
+	err = u.authorize(d, apiKey)
+	if err != nil {
+		return "", 0, false, err
+	}
+
+	if d.Status != domain.DeploymentActive {
+		return "", 0, false, domain.ErrNoDeployment
+	}
+
+	job, err := u.jobs.Get(d.TrainingJobID)
+	if err != nil {
+		return "", 0, false, err
+	}
+
+	usable, err := u.usableExamples(d.TaskID)
+	if err != nil {
+		return "", 0, false, err
+	}
+
+	output, confidence = engine.PredictConstrained(job, usable, input, grammar)
+
+	d.RequestCount++
+	_ = u.deployments.Update(d)
+
+	return output, confidence, true, nil
+}
+
+// ValidateOutput reports whether an output string satisfies the deployment's
+// task JSON schema. Deployments without a schema always return true (nothing
+// to validate against).
+func (u *DeploymentUsecase) ValidateOutput(deploymentID, output string) bool {
+	d, err := u.deployments.Get(deploymentID)
+	if err != nil {
+		return false
+	}
+
+	task, err := u.tasks.Get(d.TaskID)
+	if err != nil {
+		return false
+	}
+
+	if strings.TrimSpace(task.JSONSchema) == "" {
+		return true
+	}
+
+	return domain.ValidateJSONAgainstSchema(task.JSONSchema, output) == nil
+}
+
+// InvokeClassify runs a seq_classifier deployment and returns the structured
+// label + per-class scores. It only works for deployments whose kind is
+// KindSeqClassifier (or an unset kind for pre-kind records).
+func (u *DeploymentUsecase) InvokeClassify(deploymentID, apiKey, input string) (domain.ClassifierPrediction, error) {
+	d, err := u.deployments.Get(deploymentID)
+	if err != nil {
+		return domain.ClassifierPrediction{}, err
+	}
+
+	err = u.authorize(d, apiKey)
+	if err != nil {
+		return domain.ClassifierPrediction{}, err
+	}
+
+	if d.Status != domain.DeploymentActive {
+		return domain.ClassifierPrediction{}, domain.ErrNoDeployment
+	}
+
+	engine, ok := u.engine.(domain.ClassifierInferenceEngine)
+	if !ok || engine == nil {
+		return domain.ClassifierPrediction{}, errors.New("deployment is not a sequence classifier model")
+	}
+
+	job, err := u.jobs.Get(d.TrainingJobID)
+	if err != nil {
+		return domain.ClassifierPrediction{}, err
+	}
+
+	usable, err := u.usableExamples(d.TaskID)
+	if err != nil {
+		return domain.ClassifierPrediction{}, err
+	}
+
+	threshold := d.ConfidenceThreshold
+
+	pred, err := engine.PredictClassification(job, usable, input, d.LabelMap, threshold)
+	if err != nil {
+		return domain.ClassifierPrediction{}, err
+	}
+
+	d.RequestCount++
+	_ = u.deployments.Update(d)
+
+	return pred, nil
+}
+
+// InvokeNER runs a token_classifier deployment and returns the labeled spans.
+// It only works for deployments whose kind is KindTokenClassifier.
+func (u *DeploymentUsecase) InvokeNER(deploymentID, apiKey, input string) (domain.NERPrediction, error) {
+	d, err := u.deployments.Get(deploymentID)
+	if err != nil {
+		return domain.NERPrediction{}, err
+	}
+
+	err = u.authorize(d, apiKey)
+	if err != nil {
+		return domain.NERPrediction{}, err
+	}
+
+	if d.Status != domain.DeploymentActive {
+		return domain.NERPrediction{}, domain.ErrNoDeployment
+	}
+
+	engine, ok := u.engine.(domain.NERInferenceEngine)
+	if !ok || engine == nil {
+		return domain.NERPrediction{}, errors.New("deployment is not a token classifier model")
+	}
+
+	job, err := u.jobs.Get(d.TrainingJobID)
+	if err != nil {
+		return domain.NERPrediction{}, err
+	}
+
+	usable, err := u.usableExamples(d.TaskID)
+	if err != nil {
+		return domain.NERPrediction{}, err
+	}
+
+	pred, err := engine.PredictSpans(job, usable, input, d.LabelMap)
+	if err != nil {
+		return domain.NERPrediction{}, err
+	}
+
+	d.RequestCount++
+	_ = u.deployments.Update(d)
+
+	return pred, nil
 }
 
 // BatchResult is one row of a batch inference run.
@@ -554,15 +733,29 @@ func (u *DeploymentUsecase) deployJob(
 		return nil, "", err
 	}
 
+	// Carry the job's kind and the model's label map / threshold so the
+	// inference server can decode the head and the API can shape the result
+	// per kind (seq_classifier -> label+scores, token_classifier -> entities).
 	d := &domain.Deployment{
 		ID:            id,
 		TaskID:        taskID,
 		TrainingJobID: job.ID,
+		Kind:          job.Kind,
 		Endpoint:      fmt.Sprintf("/api/v1/inference/%s/predict", id),
 		Autoscale:     autoscale,
 		Status:        domain.DeploymentActive,
 		APIKeyHash:    keyHash,
 		CreatedAt:     time.Now().UTC(), RequestCount: 0,
+	}
+
+	if job.Metrics != nil {
+		if len(job.Metrics.LabelMap) > 0 {
+			d.LabelMap = job.Metrics.LabelMap
+		}
+
+		if job.Metrics.DefaultThreshold > 0 {
+			d.ConfidenceThreshold = job.Metrics.DefaultThreshold
+		}
 	}
 
 	err = u.deployments.Create(d)

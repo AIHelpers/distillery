@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -144,7 +145,7 @@ func (e *LlamacppEngine) Predict(
 		return fmt.Sprintf("(inference backend unavailable: %v)", err), 0
 	}
 
-	output, err = e.completion(proc.port, input)
+	output, err = e.completion(proc.port, input, "")
 	if err != nil {
 		// A crashed backend is restarted on the next call (and we retry once
 		// right now, which covers a race between health-check and first
@@ -154,7 +155,51 @@ func (e *LlamacppEngine) Predict(
 		_ = e.killServer(job.ID)
 
 		if p, rErr := e.ensureServer(job.ID, ggufPath); rErr == nil {
-			if out, rErr := e.completion(p.port, input); rErr == nil {
+			if out, rErr := e.completion(p.port, input, ""); rErr == nil {
+				return out, 0.95
+			}
+		}
+
+		return fmt.Sprintf("(inference error: %v)", err), 0
+	}
+
+	return output, 0.95
+}
+
+// PredictConstrained implements domain.ConstrainedInferenceEngine: it runs the
+// same backend but passes a GBNF grammar to llama-server so decoding is forced
+// to produce schema-valid JSON. When the backend is simulation (or no GGUF
+// exists) it falls back to the demo engine.
+func (e *LlamacppEngine) PredictConstrained(
+	job *domain.TrainingJob,
+	trainingExamples []*domain.Example,
+	input string,
+	grammar string,
+) (output string, confidence float64) {
+	if e.cfg.Backend != "llamacpp" || job == nil || strings.TrimSpace(grammar) == "" {
+		return e.fallback.Predict(job, trainingExamples, input)
+	}
+
+	ggufPath, err := e.resolveGGUF(job.ID)
+	if err != nil || ggufPath == "" {
+		return e.fallback.Predict(job, trainingExamples, input)
+	}
+
+	proc, err := e.ensureServer(job.ID, ggufPath)
+	if err != nil {
+		e.recordErr(job.ID, err)
+
+		return fmt.Sprintf("(inference backend unavailable: %v)", err), 0
+	}
+
+	output, err = e.completion(proc.port, input, grammar)
+	if err != nil {
+		e.recordErr(job.ID, err)
+
+		_ = e.killServer(job.ID)
+
+		if p, rErr := e.ensureServer(job.ID, ggufPath); rErr == nil {
+			if out, rErr := e.completion(p.port, input, grammar); rErr == nil {
 				return out, 0.95
 			}
 		}
@@ -319,17 +364,25 @@ func (e *LlamacppEngine) waitHealthy(port int, timeout time.Duration) error {
 }
 
 // completion calls the llama.cpp /completion endpoint with the input prompt.
-func (e *LlamacppEngine) completion(port int, input string) (string, error) {
+// When grammar is non-empty it is passed as llama-server's GBNF `grammar`
+// parameter, constraining decoding to schema-valid JSON.
+func (e *LlamacppEngine) completion(port int, input, grammar string) (string, error) {
 	url := fmt.Sprintf("http://%s:%d/completion", e.cfg.Host, port)
 
-	body, err := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"prompt":       input,
 		"n_predict":    128,
 		"temperature":  0.7,
 		"stop":         []string{"</s>", "<|im_end|>"},
 		"stream":       false,
 		"cache_prompt": true,
-	})
+	}
+
+	if strings.TrimSpace(grammar) != "" {
+		payload["grammar"] = grammar
+	}
+
+	body, err := json.Marshal(payload)
 	if err != nil {
 		return "", err
 	}

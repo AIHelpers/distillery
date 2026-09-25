@@ -104,6 +104,7 @@ func (m *mockExampleRepo) AddBatch(es []*domain.Example) error {
 	}
 
 	m.addBatch = append(m.addBatch, es...)
+	m.examples = append(m.examples, es...)
 
 	return nil
 }

@@ -81,6 +81,14 @@ type TrainingMetrics struct {
 	BaseRecall5  float64 `json:"base_recall5,omitempty"`
 	BaseRecall10 float64 `json:"base_recall10,omitempty"`
 	EmbeddingDim int     `json:"embedding_dim,omitempty"`
+
+	// NER metrics (populated when Kind == KindTokenClassifier). Micro-F1 is
+	// entity-level (strict match), the headline number mirrors seqeval.
+	EntityF1  float64                     `json:"entity_f1,omitempty"`
+	EntityP   float64                     `json:"entity_precision,omitempty"`
+	EntityR   float64                     `json:"entity_recall,omitempty"`
+	PartialF1 float64                     `json:"partial_entity_f1,omitempty"`
+	PerEntity map[string]PerEntityMetrics `json:"per_entity,omitempty"`
 }
 
 // TrainingJob represents one fine-tuning run for a task.
@@ -104,6 +112,16 @@ type TrainingJob struct {
 	// Reranker holds the hyperparameters passed to a reranker training
 	// run (empty unless Kind == KindReranker).
 	Reranker *RerankerConfig `json:"reranker,omitempty"`
+	// NER holds the hyperparameters passed to a token_classifier training
+	// run (empty unless Kind == KindTokenClassifier).
+	NER *NERConfig `json:"ner,omitempty"`
+	// JSONSchema is the task's Track B output schema (empty for other kinds).
+	// It flows to the trainer so the SFT eval can report a JSON validity rate,
+	// and to inference for schema-constrained decoding.
+	JSONSchema string `json:"json_schema,omitempty"`
+	// LabelSet is the task's allowed entity labels for token_classifier runs
+	// (empty = any label allowed).
+	LabelSet []string `json:"label_set,omitempty"`
 	// Model records the per-model inference metadata (dim, prefixes, etc).
 	Model ModelRecord `json:"model,omitempty"`
 	// ParentJobID links this job to the job it continues from (lineage for

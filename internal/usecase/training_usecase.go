@@ -123,6 +123,17 @@ func (u *TrainingUsecase) StartTraining(taskID string, baseModelID ...string) (*
 		StartedAt: &now, Metrics: nil, Error: "", CompletedAt: nil,
 	}
 
+	// Seed the per-kind hyperparameters so the worker receives explicit
+	// values (the trainer falls back to its own defaults for zero fields).
+	if kind == domain.KindTokenClassifier {
+		job.NER = &domain.NERConfig{MaxLength: 256, Stride: 64, LabelScheme: "BIO"}
+		job.LabelSet = task.LabelSet
+	}
+
+	// Track B: carry the task's JSON schema so the trainer can report a JSON
+	// validity rate and inference can use schema-constrained decoding.
+	job.JSONSchema = task.JSONSchema
+
 	err = u.jobs.Create(job)
 	if err != nil {
 		return nil, err

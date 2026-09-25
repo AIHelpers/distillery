@@ -47,6 +47,19 @@ type InferenceEngine interface {
 	Predict(job *TrainingJob, trainingExamples []*Example, input string) (output string, confidence float64)
 }
 
+// ConstrainedInferenceEngine serves schema-constrained generation: the
+// backend emits output that conforms to a GBNF grammar (generated from the
+// task's JSON schema) so extraction deployments return schema-valid JSON on
+// every call.
+type ConstrainedInferenceEngine interface {
+	PredictConstrained(
+		job *TrainingJob,
+		trainingExamples []*Example,
+		input string,
+		grammar string,
+	) (output string, confidence float64)
+}
+
 // EmbeddingEngine serves embedding vectors from a deployed embedding model.
 type EmbeddingEngine interface {
 	// Embed returns a normalized vector per input. embedType selects the

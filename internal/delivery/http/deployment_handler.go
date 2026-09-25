@@ -100,16 +100,65 @@ func (h *DeploymentHandler) Invoke(w http.ResponseWriter, r *http.Request, deplo
 		return
 	}
 
-	output, confidence, err := h.uc.Invoke(deploymentID, apiKeyFromRequest(r), req.Input)
+	// Kind-aware dispatch: seq_classifier and token_classifier deployments
+	// return structured results, everything else returns text + confidence.
+	kind, err := h.uc.DeploymentKind(deploymentID)
 	if err != nil {
 		handleErr(w, err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	switch kind {
+	case domain.KindSeqClassifier:
+		pred, err := h.uc.InvokeClassify(deploymentID, apiKeyFromRequest(r), req.Input)
+		if err != nil {
+			handleErr(w, err)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"kind":   "seq_classifier",
+			"result": pred,
+		})
+
+		return
+
+	case domain.KindTokenClassifier:
+		pred, err := h.uc.InvokeNER(deploymentID, apiKeyFromRequest(r), req.Input)
+		if err != nil {
+			handleErr(w, err)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"kind":   "token_classifier",
+			"result": pred,
+		})
+
+		return
+	}
+
+	// Track B: for causal_lm/extraction deployments the task may declare a
+	// JSON schema; InvokeStructured generates a GBNF grammar from it and
+	// constrains decoding so served output is schema-valid. It degrades to
+	// the plain path when no schema/engine support is present.
+	output, confidence, constrained, err := h.uc.InvokeStructured(deploymentID, apiKeyFromRequest(r), req.Input)
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	resp := map[string]interface{}{
 		"output":     output,
 		"confidence": confidence,
-	})
+	}
+
+	if constrained {
+		resp["constrained"] = true
+		resp["json_valid"] = h.uc.ValidateOutput(deploymentID, output)
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // Embed serves the deployed embedding model. POST /inference/{id}/embed.

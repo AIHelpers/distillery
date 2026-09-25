@@ -52,6 +52,26 @@ func (h *TaskHandler) Get(w http.ResponseWriter, _ *http.Request, taskID string)
 	writeJSON(w, http.StatusOK, t)
 }
 
+// Update applies a partial update to a task (name, description, label set,
+// JSON schema). Omitting a field leaves it unchanged.
+func (h *TaskHandler) Update(w http.ResponseWriter, r *http.Request, taskID string) {
+	var req updateTaskRequest
+
+	err := decodeJSON(r, &req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	t, err := h.uc.UpdateTask(taskID, req.Name, req.Description, req.LabelSet, req.JSONSchema)
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, t)
+}
+
 func (h *TaskHandler) Delete(w http.ResponseWriter, _ *http.Request, taskID string) {
 	err := h.uc.DeleteTask(taskID)
 	if err != nil {
