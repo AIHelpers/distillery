@@ -10,4 +10,8 @@ var (
 	ErrNoDeployment   = errors.New("no active deployment for this task")
 	ErrNoModel        = errors.New("no completed training job for this task")
 	ErrUnauthorized   = errors.New("missing or invalid API key")
+	// ErrRegressionFailed is returned when a preference-tuned (DPO/ORPO) job
+	// regressed on its parent SFT job's eval metric beyond the allowed
+	// tolerance and deploy was not forced.
+	ErrRegressionFailed = errors.New("preference-tuned model regressed on the parent's eval metric")
 )

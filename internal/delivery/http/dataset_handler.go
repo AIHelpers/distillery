@@ -266,3 +266,53 @@ func (h *DatasetHandler) Stats(w http.ResponseWriter, _ *http.Request, taskID st
 
 	writeJSON(w, http.StatusOK, stats)
 }
+
+// AddPreference POST /api/v1/tasks/{taskID}/preferences adds a single
+// (prompt, chosen, rejected) example to the task's preference dataset.
+func (h *DatasetHandler) AddPreference(w http.ResponseWriter, r *http.Request, taskID string) {
+	var req preferencePairRequest
+
+	err := decodeJSON(r, &req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	stats, err := h.uc.AddPreferencePair(taskID, req.Prompt, req.Chosen, req.Rejected)
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, stats)
+}
+
+// ImportPreferences POST /api/v1/tasks/{taskID}/preferences/import bulk-loads
+// {"prompt","chosen","rejected"} JSONL records from the uploaded body.
+func (h *DatasetHandler) ImportPreferences(w http.ResponseWriter, r *http.Request, taskID string) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 20<<20)) // 20MB cap.
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read request body")
+		return
+	}
+
+	stats, err := h.uc.ImportPreferenceJSONL(taskID, string(body))
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, stats)
+}
+
+// PreferenceStats GET /api/v1/tasks/{taskID}/preferences/stats reports the
+// task's preference dataset size and length-bias diagnostic.
+func (h *DatasetHandler) PreferenceStats(w http.ResponseWriter, _ *http.Request, taskID string) {
+	stats, err := h.uc.PreferenceStats(taskID)
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, stats)
+}

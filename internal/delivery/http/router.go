@@ -153,6 +153,17 @@ func registerTaskRoutes(mux *http.ServeMux, h Handlers) {
 		h.Dataset.Stats(w, r, r.PathValue("taskID"))
 	})
 
+	// --- Preference (DPO/ORPO) dataset ---.
+	mux.HandleFunc("POST /api/v1/tasks/{taskID}/preferences", func(w http.ResponseWriter, r *http.Request) {
+		h.Dataset.AddPreference(w, r, r.PathValue("taskID"))
+	})
+	mux.HandleFunc("POST /api/v1/tasks/{taskID}/preferences/import", func(w http.ResponseWriter, r *http.Request) {
+		h.Dataset.ImportPreferences(w, r, r.PathValue("taskID"))
+	})
+	mux.HandleFunc("GET /api/v1/tasks/{taskID}/preferences/stats", func(w http.ResponseWriter, r *http.Request) {
+		h.Dataset.PreferenceStats(w, r, r.PathValue("taskID"))
+	})
+
 	// --- Training ---.
 	mux.HandleFunc("POST /api/v1/tasks/{taskID}/training", func(w http.ResponseWriter, r *http.Request) {
 		h.Training.Start(w, r, r.PathValue("taskID"))

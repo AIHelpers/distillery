@@ -42,12 +42,39 @@ func (h *FeedbackHandler) List(w http.ResponseWriter, _ *http.Request, taskID st
 	writeJSON(w, http.StatusOK, list)
 }
 
-func (h *FeedbackHandler) Fold(w http.ResponseWriter, _ *http.Request, taskID string) {
-	n, err := h.uc.FoldIntoDataset(taskID)
+// Fold converts unresolved feedback for a task into new training examples,
+// as either corrected SFT examples (default) or DPO/ORPO preference pairs,
+// selected by the optional ?target=sft|preferences query parameter.
+func (h *FeedbackHandler) Fold(w http.ResponseWriter, r *http.Request, taskID string) {
+	target := usecase.FoldTarget(r.URL.Query().Get("target"))
+	if target == "" {
+		target = usecase.FoldTargetSFT
+	}
+
+	var (
+		n   int
+		err error
+	)
+
+	switch target {
+	case usecase.FoldTargetSFT:
+		n, err = h.uc.FoldIntoDataset(taskID)
+	case usecase.FoldTargetPreferences:
+		n, err = h.uc.FoldFeedbackAsPreferences(taskID)
+	default:
+		writeError(w, http.StatusBadRequest, "target must be \"sft\" or \"preferences\"")
+		return
+	}
+
 	if err != nil {
 		handleErr(w, err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]int{"examples_added": n})
+	key := "examples_added"
+	if target == usecase.FoldTargetPreferences {
+		key = "preferences_added"
+	}
+
+	writeJSON(w, http.StatusOK, map[string]int{key: n})
 }

@@ -217,9 +217,22 @@ func (u *DatasetUsecase) Curate(taskID string) (*domain.DatasetStats, error) {
 		return nil, err
 	}
 
-	list, err := u.examples.ListByTask(taskID)
+	all, err := u.examples.ListByTask(taskID)
 	if err != nil {
 		return nil, err
+	}
+
+	// A task's primary dataset only ever holds examples of the task's own
+	// kind (legacy records leave Kind empty). Other kinds can share a task
+	// ID — preference pairs fed by the Feedback tab live alongside a
+	// causal_lm task's SFT examples, for instance — and are curated
+	// separately (see PreferenceStats), so they're excluded here.
+	list := make([]*domain.Example, 0, len(all))
+
+	for _, e := range all {
+		if e.Kind == "" || e.Kind == task.Kind {
+			list = append(list, e)
+		}
 	}
 
 	stats := &domain.DatasetStats{
@@ -333,6 +346,10 @@ func curationKey(e *domain.Example) string {
 		return "ner:" + strings.ToLower(text)
 	}
 
+	if prompt, chosen, rejected, ok := preferencePayloadFields(e); ok {
+		return "pref:" + strings.ToLower(prompt) + "\x00" + strings.ToLower(chosen) + "\x00" + strings.ToLower(rejected)
+	}
+
 	query, positive, negative, doc := payloadFields(e)
 
 	switch {
@@ -375,6 +392,31 @@ func nerPayloadText(e *domain.Example) (string, bool) {
 	}
 
 	return probe.Text, true
+}
+
+// preferencePayloadFields extracts prompt/chosen/rejected from a
+// preference_lm payload. It returns ok=false for other payload shapes.
+func preferencePayloadFields(e *domain.Example) (prompt, chosen, rejected string, ok bool) {
+	if len(e.Payload) == 0 {
+		return "", "", "", false
+	}
+
+	var p struct {
+		Prompt   string `json:"prompt"`
+		Chosen   string `json:"chosen"`
+		Rejected string `json:"rejected"`
+	}
+
+	if json.Unmarshal(e.Payload, &p) != nil {
+		return "", "", "", false
+	}
+
+	prompt, chosen, rejected = strings.TrimSpace(p.Prompt), strings.TrimSpace(p.Chosen), strings.TrimSpace(p.Rejected)
+	if prompt == "" || chosen == "" || rejected == "" {
+		return "", "", "", false
+	}
+
+	return prompt, chosen, rejected, true
 }
 
 func payloadFields(e *domain.Example) (query, positive, negative, doc string) {
@@ -421,6 +463,23 @@ func qualityFlag(e *domain.Example) (flagged bool, note string) {
 	if text, ok := nerPayloadText(e); ok {
 		if len(strings.TrimSpace(text)) < minInputLen {
 			return true, "text too short"
+		}
+
+		return false, ""
+	}
+
+	// Preference kind (typed Payload with prompt/chosen/rejected).
+	if prompt, chosen, rejected, ok := preferencePayloadFields(e); ok {
+		if len(prompt) < minInputLen {
+			return true, "prompt too short"
+		}
+
+		if chosen == "" || rejected == "" {
+			return true, "chosen/rejected must not be empty"
+		}
+
+		if strings.EqualFold(chosen, rejected) {
+			return true, "chosen and rejected are identical"
 		}
 
 		return false, ""

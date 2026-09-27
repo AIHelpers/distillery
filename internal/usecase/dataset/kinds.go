@@ -272,6 +272,10 @@ type preferenceLMPayload struct {
 	Rejected string `json:"rejected"`
 }
 
+// maxPreferenceFieldLen bounds prompt/chosen/rejected text length so a
+// single runaway example can't blow up tokenization/VRAM at train time.
+const maxPreferenceFieldLen = 16000
+
 // Kind implements domain.DatasetSchema.
 func (s *PreferenceLMSchema) Kind() domain.ModelKind { return domain.KindPreferenceLM }
 
@@ -284,16 +288,26 @@ func (s *PreferenceLMSchema) Validate(payload json.RawMessage) error {
 		return &schemaError{kind: domain.KindPreferenceLM, msg: "payload must be a JSON object with prompt/chosen/rejected fields"}
 	}
 
-	if strings.TrimSpace(p.Prompt) == "" {
+	prompt, chosen, rejected := strings.TrimSpace(p.Prompt), strings.TrimSpace(p.Chosen), strings.TrimSpace(p.Rejected)
+
+	if prompt == "" {
 		return &schemaError{kind: domain.KindPreferenceLM, msg: "prompt is required"}
 	}
 
-	if strings.TrimSpace(p.Chosen) == "" {
+	if chosen == "" {
 		return &schemaError{kind: domain.KindPreferenceLM, msg: "chosen is required"}
 	}
 
-	if strings.TrimSpace(p.Rejected) == "" {
+	if rejected == "" {
 		return &schemaError{kind: domain.KindPreferenceLM, msg: "rejected is required"}
+	}
+
+	if len(prompt) > maxPreferenceFieldLen || len(chosen) > maxPreferenceFieldLen || len(rejected) > maxPreferenceFieldLen {
+		return &schemaError{kind: domain.KindPreferenceLM, msg: "prompt/chosen/rejected exceed the maximum allowed length"}
+	}
+
+	if chosen == rejected {
+		return &schemaError{kind: domain.KindPreferenceLM, msg: "chosen and rejected must differ"}
 	}
 
 	return nil

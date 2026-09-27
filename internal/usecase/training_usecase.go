@@ -1,6 +1,8 @@
 package usecase
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"distillery/internal/domain"
@@ -32,12 +34,48 @@ func NewTrainingUsecase(
 	}
 }
 
+// TrainingStartOptions carries the optional knobs for starting a training
+// run beyond the task ID: an explicit base model choice, and — for a
+// DPO/ORPO preference-tuning run — the method and parent SFT job.
+type TrainingStartOptions struct {
+	// BaseModel optionally names a catalog entry (name or repo ID),
+	// overriding the auto-recommended default.
+	BaseModel string
+	// Method selects "dpo" or "orpo" for a preference-tuning run. Leaving it
+	// empty starts (or continues) an ordinary training run for the task's
+	// own kind, UNLESS the task's kind is already preference_lm, in which
+	// case it defaults to "orpo" (the only method that needs no parent).
+	Method string
+	// ParentJobID is the completed causal_lm (SFT) job whose adapter is the
+	// starting policy for a DPO run (required for method=dpo; optional and
+	// unused for method=orpo, which is reference-free).
+	ParentJobID string
+}
+
 // StartTraining validates the dataset is ready, selects a base model —
 // either the one the user explicitly chose (by name) or the auto-recommended
 // default — creates a queued/running TrainingJob, and kicks off the
 // (simulated) LoRA/QLoRA fine-tune asynchronously. It returns immediately
 // with the job; callers poll GetJob for progress.
+//
+// This is a thin backward-compatible wrapper over StartTrainingWithOptions;
+// new callers that need a DPO/ORPO run should call that directly.
 func (u *TrainingUsecase) StartTraining(taskID string, baseModelID ...string) (*domain.TrainingJob, error) {
+	opts := TrainingStartOptions{}
+	if len(baseModelID) > 0 {
+		opts.BaseModel = baseModelID[0]
+	}
+
+	return u.startTraining(taskID, opts)
+}
+
+// StartTrainingWithOptions is StartTraining plus the DPO/ORPO preference-
+// tuning options (method, parent job).
+func (u *TrainingUsecase) StartTrainingWithOptions(taskID string, opts TrainingStartOptions) (*domain.TrainingJob, error) {
+	return u.startTraining(taskID, opts)
+}
+
+func (u *TrainingUsecase) startTraining(taskID string, opts TrainingStartOptions) (*domain.TrainingJob, error) {
 	task, err := u.tasks.Get(taskID)
 	if err != nil {
 		return nil, err
@@ -61,6 +99,67 @@ func (u *TrainingUsecase) StartTraining(taskID string, baseModelID ...string) (*
 		}
 	}
 
+	// The task kind drives the trainer module, dataset schema, and catalog
+	// section; pre-kind records default to causal_lm.
+	kind := task.Kind
+	if !domain.IsValidModelKind(kind) {
+		kind = domain.DefaultModelKind
+	}
+
+	// A preference-tuning (DPO/ORPO) run is requested either explicitly via
+	// opts.Method, or implicitly when the task itself was created with
+	// Kind == preference_lm (the from-scratch ORPO case, no parent job).
+	// It overrides `kind` for THIS job only — a causal_lm task's own Kind
+	// is untouched, so its dataset/readiness view and future SFT reruns
+	// keep working exactly as before; the job history simply gains a
+	// preference_lm entry (e.g. "SFT v3 -> DPO v4" in version history).
+	preferenceRequested := opts.Method != "" || kind == domain.KindPreferenceLM
+
+	var (
+		parent  *domain.TrainingJob
+		prefCfg domain.PreferenceConfig
+	)
+
+	if preferenceRequested {
+		if kind != domain.KindCausalLM && kind != domain.KindPreferenceLM {
+			return nil, fmt.Errorf("%w: preference tuning is only available for causal_lm or preference_lm tasks", domain.ErrInvalidInput)
+		}
+
+		method := domain.PreferenceMethod(strings.ToLower(strings.TrimSpace(opts.Method)))
+		if method == "" {
+			method = domain.MethodDPO
+		}
+
+		if !domain.IsValidPreferenceMethod(method) {
+			return nil, fmt.Errorf("%w: method must be %q or %q", domain.ErrInvalidInput, domain.MethodDPO, domain.MethodORPO)
+		}
+
+		if strings.TrimSpace(opts.ParentJobID) != "" {
+			parent, err = u.jobs.Get(opts.ParentJobID)
+			if err != nil {
+				return nil, err
+			}
+
+			if parent.Kind != domain.KindCausalLM || parent.Status != domain.TrainingCompleted {
+				return nil, fmt.Errorf("%w: parent_job_id must reference a completed causal_lm (SFT) job", domain.ErrInvalidInput)
+			}
+		}
+
+		// Requires a parent SFT job (C2 in the plan): its adapter is the
+		// starting policy and, with LoRA, the implicit reference model.
+		// Tuning from a base model with no SFT is allowed only with ORPO.
+		if method == domain.MethodDPO && parent == nil {
+			return nil, fmt.Errorf(
+				"%w: dpo requires parent_job_id (a completed SFT job); use method=orpo to tune from a base model directly",
+				domain.ErrInvalidInput,
+			)
+		}
+
+		prefCfg = domain.DefaultPreferenceConfig()
+		prefCfg.Method = method
+		kind = domain.KindPreferenceLM
+	}
+
 	all, err := u.examples.ListByTask(taskID)
 	if err != nil {
 		return nil, err
@@ -75,6 +174,18 @@ func (u *TrainingUsecase) StartTraining(taskID string, baseModelID ...string) (*
 			continue
 		}
 
+		// A task can carry examples of more than one kind (preference pairs
+		// fed by the Feedback tab live alongside a causal_lm task's SFT
+		// examples): only feed the worker examples matching the kind this
+		// job actually trains.
+		if kind == domain.KindPreferenceLM {
+			if e.Kind != domain.KindPreferenceLM {
+				continue
+			}
+		} else if e.Kind != "" && e.Kind != kind {
+			continue
+		}
+
 		usable = append(usable, e)
 		totalIn += len(e.Input)
 		totalOut += len(e.Output)
@@ -86,13 +197,6 @@ func (u *TrainingUsecase) StartTraining(taskID string, baseModelID ...string) (*
 
 	avgIn, avgOut := totalIn/len(usable), totalOut/len(usable)
 
-	// The task kind drives the trainer module, dataset schema, and catalog
-	// section; pre-kind records default to causal_lm.
-	kind := task.Kind
-	if !domain.IsValidModelKind(kind) {
-		kind = domain.DefaultModelKind
-	}
-
 	var base domain.BaseModel
 	if kind == domain.KindCausalLM {
 		base = u.selector.SelectBaseModel(task, len(usable), avgIn, avgOut)
@@ -102,11 +206,18 @@ func (u *TrainingUsecase) StartTraining(taskID string, baseModelID ...string) (*
 	}
 
 	// Prefer the user's explicit model choice over the auto-recommendation.
-	if len(baseModelID) > 0 && baseModelID[0] != "" {
-		chosen := findBaseModel(u.selector.ListBaseModels(), baseModelID[0])
+	if opts.BaseModel != "" {
+		chosen := findBaseModel(u.selector.ListBaseModels(), opts.BaseModel)
 		if chosen != nil {
 			base = *chosen
 		}
+	}
+
+	// A DPO run continues the parent's exact base model — its adapter only
+	// loads onto the same architecture it was trained against — so this
+	// overrides both the auto-recommendation and any explicit choice above.
+	if parent != nil {
+		base = parent.BaseModel
 	}
 
 	now := time.Now().UTC()
@@ -128,6 +239,14 @@ func (u *TrainingUsecase) StartTraining(taskID string, baseModelID ...string) (*
 	if kind == domain.KindTokenClassifier {
 		job.NER = &domain.NERConfig{MaxLength: 256, Stride: 64, LabelScheme: "BIO"}
 		job.LabelSet = task.LabelSet
+	}
+
+	if preferenceRequested {
+		job.Preference = &prefCfg
+
+		if parent != nil {
+			job.ParentJobID = parent.ID
+		}
 	}
 
 	// Track B: carry the task's JSON schema so the trainer can report a JSON
