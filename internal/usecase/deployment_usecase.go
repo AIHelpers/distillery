@@ -51,7 +51,7 @@ func NewDeploymentUsecase(
 // endpoint with one-click deployment + autoscaling, as in the product spec.
 // It returns the deployment plus the raw API key — the key is only ever
 // available at this moment; only its hash is persisted.
-func (u *DeploymentUsecase) Deploy(taskID string, autoscale bool) (*domain.Deployment, string, error) {
+func (u *DeploymentUsecase) Deploy(taskID string, autoscale bool, force ...bool) (*domain.Deployment, string, error) {
 	_, err := u.tasks.Get(taskID)
 	if err != nil {
 		return nil, "", err
@@ -62,12 +62,22 @@ func (u *DeploymentUsecase) Deploy(taskID string, autoscale bool) (*domain.Deplo
 		return nil, "", err
 	}
 
+	err = checkRegressionGate(job, len(force) > 0 && force[0])
+	if err != nil {
+		return nil, "", err
+	}
+
 	return u.deployJob(taskID, job, autoscale)
 }
 
 // DeployVersion deploys a specific (completed) training job version for the
 // task, enabling model comparison and rollback to an earlier fine-tune.
-func (u *DeploymentUsecase) DeployVersion(taskID, jobID string, autoscale bool) (*domain.Deployment, string, error) {
+//
+// Definition of done's regression gate: deploying a preference-tuned
+// (DPO/ORPO) job that regressed on its parent SFT job's eval metric is
+// blocked unless force is passed, so a drifted model doesn't silently
+// replace a good one.
+func (u *DeploymentUsecase) DeployVersion(taskID, jobID string, autoscale bool, force ...bool) (*domain.Deployment, string, error) {
 	_, err := u.tasks.Get(taskID)
 	if err != nil {
 		return nil, "", err
@@ -82,7 +92,35 @@ func (u *DeploymentUsecase) DeployVersion(taskID, jobID string, autoscale bool) 
 		return nil, "", domain.ErrNoModel
 	}
 
+	err = checkRegressionGate(job, len(force) > 0 && force[0])
+	if err != nil {
+		return nil, "", err
+	}
+
 	return u.deployJob(taskID, job, autoscale)
+}
+
+// checkRegressionGate blocks deploying a preference-tuned job whose
+// regression check (computed by the trainer against the parent SFT job's
+// eval split — see PreferenceConfig/dpo.py) failed, unless the caller
+// forces it through.
+func checkRegressionGate(job *domain.TrainingJob, force bool) error {
+	if force || job == nil || job.Kind != domain.KindPreferenceLM || job.Metrics == nil {
+		return nil
+	}
+
+	if job.Metrics.RegressionChecked && !job.Metrics.RegressionPassed {
+		return fmt.Errorf(
+			"%w: %s dropped from %.4f to %.4f (delta %.4f)",
+			domain.ErrRegressionFailed,
+			job.Metrics.RegressionMetric,
+			job.Metrics.RegressionBase,
+			job.Metrics.RegressionValue,
+			job.Metrics.RegressionDelta,
+		)
+	}
+
+	return nil
 }
 
 func (u *DeploymentUsecase) GetActiveDeployment(taskID string) (*domain.Deployment, error) {

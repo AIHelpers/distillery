@@ -315,6 +315,36 @@ Can I change my email on file? -> account"></textarea>
     </div>
     `}
 
+    ${task.kind === "causal_lm" ? `
+    <div class="card">
+      <h3>Preference pairs (for DPO / ORPO tuning)</h3>
+      <p class="hint">Add or import <span class="source-tag">{prompt, chosen, rejected}</span> triples -
+      pairs where one answer is better than the other. These feed a preference-tuning run in the
+      Training tab, separate from the ordinary input/output dataset above.</p>
+      <div class="field" style="margin-bottom:10px;">
+        <label>Prompt</label>
+        <textarea id="pref-prompt" rows="2" placeholder="What's your return policy?"></textarea>
+      </div>
+      <div class="field" style="margin-bottom:10px;">
+        <label>Chosen (better answer)</label>
+        <textarea id="pref-chosen" rows="2" placeholder="You can return any item within 30 days for a full refund."></textarea>
+      </div>
+      <div class="field" style="margin-bottom:10px;">
+        <label>Rejected (worse answer)</label>
+        <textarea id="pref-rejected" rows="2" placeholder="idk, check the website"></textarea>
+      </div>
+      <div class="modal-actions" style="justify-content:flex-start; margin-top:4px; margin-bottom:14px;">
+        <button class="btn primary" id="add-preference-btn">Add preference pair</button>
+      </div>
+      <div class="field">
+        <label>Import JSONL (<code>{"prompt","chosen","rejected"}</code> per line)</label>
+        <input type="file" id="preference-jsonl-file-input" accept=".jsonl,text/plain" />
+      </div>
+      <div class="hint" id="preference-file-status"></div>
+      <div id="preference-stats" style="margin-top:14px;"></div>
+    </div>
+    ` : ""}
+
     ${task.type === "extraction" ? `
     <div class="card">
       <h3>Track B: JSON Schema for Extraction</h3>
@@ -486,6 +516,55 @@ Can I change my email on file? -> account"></textarea>
     };
   }
 
+  // --- Preference pairs (DPO / ORPO) ---
+  const addPreferenceBtn = document.getElementById("add-preference-btn");
+  if (addPreferenceBtn) {
+    addPreferenceBtn.onclick = async () => {
+      const prompt = document.getElementById("pref-prompt").value.trim();
+      const chosen = document.getElementById("pref-chosen").value.trim();
+      const rejected = document.getElementById("pref-rejected").value.trim();
+      if (!prompt || !chosen || !rejected) {
+        toast("Prompt, chosen, and rejected are all required.", true);
+        return;
+      }
+      try {
+        await api("POST", `/tasks/${task.id}/preferences`, { prompt, chosen, rejected });
+        toast("Preference pair added.");
+        document.getElementById("pref-prompt").value = "";
+        document.getElementById("pref-chosen").value = "";
+        document.getElementById("pref-rejected").value = "";
+        renderPreferenceStats(task);
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
+  }
+
+  const preferenceJsonlInput = document.getElementById("preference-jsonl-file-input");
+  if (preferenceJsonlInput) {
+    preferenceJsonlInput.onchange = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const statusEl = document.getElementById("preference-file-status");
+      statusEl.textContent = "Importing…";
+      try {
+        const text = await file.text();
+        const res = await apiRawOrThrow("POST", `/tasks/${task.id}/preferences/import`, text, { "Content-Type": "application/x-ndjson" });
+        const stats = await res.json();
+        statusEl.textContent = "";
+        toast(`Imported preference pairs - dataset now has ${stats.total} pair(s).`);
+        renderPreferenceStats(task, stats);
+      } catch (err) {
+        statusEl.textContent = "";
+        toast(err.message, true);
+      }
+    };
+  }
+
+  if (document.getElementById("preference-stats")) {
+    renderPreferenceStats(task);
+  }
+
   // --- Track B Schema save ---
   const saveSchemaBtn = document.getElementById("save-schema-btn");
   if (saveSchemaBtn) {
@@ -580,6 +659,40 @@ function renderStats(stats) {
   `;
 }
 
+// renderPreferenceStats fetches (or reuses already-fetched) preference-pair
+// stats and renders the length-bias / readiness diagnostic into the
+// dataset panel's #preference-stats slot. Kept separate from the main
+// dataset stats fetch since preference pairs are a distinct sub-dataset.
+async function renderPreferenceStats(task, stats) {
+  const el = document.getElementById("preference-stats");
+  if (!el) return;
+  if (!stats) {
+    try {
+      stats = await api("GET", `/tasks/${task.id}/preferences/stats`);
+    } catch (e) {
+      el.innerHTML = "";
+      return;
+    }
+  }
+  if (!stats || stats.total === 0) {
+    el.innerHTML = '<p class="muted">No preference pairs yet.</p>';
+    return;
+  }
+  el.innerHTML = `
+    <div class="stat-grid">
+      <div class="stat"><div class="value">${stats.total}</div><div class="label">Total</div></div>
+      <div class="stat"><div class="value">${stats.usable_count}</div><div class="label">Usable</div></div>
+      <div class="stat"><div class="value">${stats.duplicates}</div><div class="label">Duplicates</div></div>
+      <div class="stat"><div class="value">${stats.flagged}</div><div class="label">Flagged</div></div>
+    </div>
+    <div class="readiness ${stats.ready_to_train ? "ready" : "not-ready"}">
+      ${stats.ready_to_train ? "✓ Ready to train" : "✗ Not ready to train"}
+      ${stats.readiness_reason ? " — " + escapeHtml(stats.readiness_reason) : ""}
+    </div>
+    ${stats.length_bias_warning ? `<p class="hint" style="color:var(--err);">⚠ The chosen answer is longer than the rejected one in most pairs — the model may learn "longer is better" rather than the intended preference.</p>` : ""}
+  `;
+}
+
 function renderExamplesTable(examples) {
   if (examples.length === 0) return '<p class="muted">No examples yet.</p>';
   const rows = examples
@@ -650,9 +763,11 @@ async function renderTrainingPanel(task) {
       </button>
       ${!ready && !hasActive ? '<p class="hint">Your dataset isn\'t ready yet — check the Dataset tab.</p>' : ""}
     </div>
+    ${task.kind === "causal_lm" ? renderPreferenceTrainingCard(jobs, hasActive) : ""}
+
     <div class="card">
       <h3>Training runs</h3>
-      ${jobs.length === 0 ? '<p class="muted">No training runs yet.</p>' : jobs.map((j) => renderJobRow(j)).join("")}
+      ${jobs.length === 0 ? '<p class="muted">No training runs yet.</p>' : jobs.map((j) => renderJobRow(j, jobs)).join("")}
     </div>
   `;
 
@@ -697,6 +812,25 @@ async function renderTrainingPanel(task) {
     };
   }
 
+  const startPrefBtn = document.getElementById("start-preference-btn");
+  if (startPrefBtn) {
+    startPrefBtn.onclick = async () => {
+      const method = (document.getElementById("pref-method-select") || {}).value || "dpo";
+      const parentJobId = (document.getElementById("pref-parent-select") || {}).value || "";
+      if (method === "dpo" && !parentJobId) {
+        toast("DPO needs a completed fine-tuning run to use as the parent (or switch to ORPO).", true);
+        return;
+      }
+      try {
+        await api("POST", `/tasks/${task.id}/training`, { method, parent_job_id: parentJobId });
+        toast(`${method.toUpperCase()} preference-tuning run started.`);
+        renderTrainingPanel(task);
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
+  }
+
   panel.querySelectorAll("[data-deploy-job]").forEach((btn) => {
     btn.onclick = async () => {
       try {
@@ -706,6 +840,20 @@ async function renderTrainingPanel(task) {
         renderDeployPanel(task);
         renderDocsPanel(task);
       } catch (e) {
+        // The regression gate blocks deploying a preference-tuned version
+        // that regressed vs its parent's SFT eval metric; offer to force it.
+        if (/regressed/i.test(e.message) && confirm(`${e.message}\n\nDeploy anyway?`)) {
+          try {
+            const res2 = await api("POST", `/tasks/${task.id}/training/${btn.dataset.deployJob}/deploy`, { autoscale: true, force: true });
+            state.apiKeys[res2.id] = res2.api_key;
+            toast(`Deployed v${btn.dataset.deployVersion} (forced past the regression gate).`);
+            renderDeployPanel(task);
+            renderDocsPanel(task);
+          } catch (e2) {
+            toast(e2.message, true);
+          }
+          return;
+        }
         toast(e.message, true);
       }
     };
@@ -727,10 +875,58 @@ async function renderTrainingPanel(task) {
   });
 }
 
-function renderJobRow(j) {
+// renderPreferenceTrainingCard renders the DPO/ORPO start-run card shown
+// on causal_lm tasks. DPO requires a completed parent fine-tuning run
+// (its adapter is both the starting policy and, with the adapter disabled,
+// the reference model); ORPO can run directly from the base model.
+function renderPreferenceTrainingCard(jobs, hasActive) {
+  const parentCandidates = jobs.filter((j) => j.status === "completed" && j.kind === "causal_lm");
+  const hasParent = parentCandidates.length > 0;
+  const parentOptions = parentCandidates
+    .map((j) => `<option value="${j.id}">v${j.version} — ${escapeHtml(j.base_model.name)}</option>`)
+    .join("");
+  return `
+    <div class="card">
+      <h3>Preference tuning (DPO / ORPO)</h3>
+      <p class="hint">Turn feedback corrections or preference pairs into a preference-tuned version.
+      DPO continues from a completed fine-tuning run below. ORPO can run straight from the base
+      model if you don't have a parent run yet.</p>
+      <div class="inline-form" style="align-items:flex-end; margin-bottom:12px;">
+        <div class="field">
+          <label>Method</label>
+          <select id="pref-method-select" ${hasActive ? "disabled" : ""} style="width:auto;background:var(--charcoal);color:var(--paper);border:1px solid var(--charcoal-3);border-radius:3px;padding:9px 11px;font-family:var(--font-mono);font-size:13px;">
+            <option value="dpo" ${!hasParent ? "disabled" : ""}>DPO</option>
+            <option value="orpo" ${!hasParent ? "selected" : ""}>ORPO</option>
+          </select>
+        </div>
+        <div class="field" style="flex:1;">
+          <label>Parent run (required for DPO)</label>
+          <select id="pref-parent-select" ${hasActive || !hasParent ? "disabled" : ""} style="width:100%;background:var(--charcoal);color:var(--paper);border:1px solid var(--charcoal-3);border-radius:3px;padding:9px 11px;font-family:var(--font-mono);font-size:13px;">
+            ${parentOptions || '<option value="">No completed fine-tuning runs yet</option>'}
+          </select>
+        </div>
+      </div>
+      <button class="btn primary" id="start-preference-btn" ${hasActive ? "disabled" : ""}>
+        ${hasActive ? "Training in progress…" : "Start preference-tuning run"}
+      </button>
+      ${!hasParent ? '<p class="hint">No completed fine-tuning run yet — you can still run ORPO from the base model, or finish an SFT run first to unlock DPO.</p>' : ""}
+    </div>
+  `;
+}
+
+// renderJobRow renders one training-run row. allJobs (the full sibling list)
+// lets a preference_lm row resolve and display its parent's version number.
+function renderJobRow(j, allJobs) {
   let metricsHint = "";
   if (j.metrics) {
-    if (j.kind === "token_classifier" && j.metrics.entity_f1 !== undefined) {
+    if (j.kind === "preference_lm" && j.metrics.reward_accuracy !== undefined) {
+      metricsHint = `reward acc ${(j.metrics.reward_accuracy * 100).toFixed(0)}% · margin ${j.metrics.reward_margin.toFixed(3)} · ${j.metrics.train_examples} pairs`;
+      if (j.metrics.regression_checked) {
+        metricsHint += j.metrics.regression_passed
+          ? ` · <span class="badge" style="background:var(--ok);color:#fff;">regression check passed</span>`
+          : ` · <span class="badge" style="background:var(--err);color:#fff;">regression check FAILED</span>`;
+      }
+    } else if (j.kind === "token_classifier" && j.metrics.entity_f1 !== undefined) {
       metricsHint = `Entity F1: <strong>${(j.metrics.entity_f1 * 100).toFixed(1)}%</strong> (P: ${(j.metrics.entity_precision * 100).toFixed(1)}% · R: ${(j.metrics.entity_recall * 100).toFixed(1)}%) · ${j.metrics.train_examples} examples`;
     } else {
       metricsHint = `loss ${j.metrics.final_loss.toFixed(2)} · acc ${(j.metrics.eval_accuracy * 100).toFixed(0)}% · ${j.metrics.train_examples} examples`;
@@ -744,6 +940,16 @@ function renderJobRow(j) {
     : j.error
     ? `<span class="hint" style="color:var(--err)">${escapeHtml(j.error)}</span>`
     : "";
+  let lineageHint = "";
+  if (j.kind === "preference_lm") {
+    const methodLabel = ((j.preference && j.preference.method) || "").toUpperCase();
+    if (j.parent_job_id) {
+      const parent = (allJobs || []).find((p) => p.id === j.parent_job_id);
+      lineageHint = `${methodLabel} from v${parent ? parent.version : "?"}`;
+    } else {
+      lineageHint = `${methodLabel} · no parent (trained from base model)`;
+    }
+  }
   const isRunning = j.status === "running" || j.status === "queued";
   const actions = [];
   if (j.status === "completed") {
@@ -756,6 +962,7 @@ function renderJobRow(j) {
     <div class="job-row">
       <div style="flex:1">
         <div><strong>v${j.version}</strong> — ${escapeHtml(j.base_model.name)} <span class="status-pill ${j.status}">${j.status}</span></div>
+        ${lineageHint ? `<div class="hint">${escapeHtml(lineageHint)}</div>` : ""}
         ${isRunning ? `
           <div class="gauge-wrap">
             <div class="gauge"><div class="gauge-fill" style="width:${j.progress}%"></div></div>
@@ -1134,7 +1341,11 @@ async function renderFeedbackPanel(task) {
         </tbody></table>
         <div class="modal-actions" style="justify-content:flex-start; margin-top:14px;">
           <button class="btn primary" id="fold-btn">Fold into dataset & prep retrain</button>
-        </div>`
+          <button class="btn" id="fold-preference-btn">Fold as preference pairs</button>
+        </div>
+        <p class="hint">"Fold into dataset" adds the corrections as ordinary training examples for the
+        next fine-tune. "Fold as preference pairs" instead turns each (wrong output, correction) pair
+        into a <span class="source-tag">{prompt, chosen, rejected}</span> triple for DPO/ORPO tuning.</p>`
       }
     </div>
   `;
@@ -1162,6 +1373,19 @@ async function renderFeedbackPanel(task) {
       try {
         const res = await api("POST", `/tasks/${task.id}/feedback/fold`);
         toast(`Added ${res.examples_added} corrected example(s) to the dataset. Start a new fine-tuning run when ready.`);
+        renderFeedbackPanel(task);
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
+  }
+
+  const foldPreferenceBtn = document.getElementById("fold-preference-btn");
+  if (foldPreferenceBtn) {
+    foldPreferenceBtn.onclick = async () => {
+      try {
+        const res = await api("POST", `/tasks/${task.id}/feedback/fold?target=preferences`);
+        toast(`Added ${res.preferences_added} preference pair(s). Start a DPO/ORPO run from the Training tab when ready.`);
         renderFeedbackPanel(task);
       } catch (e) {
         toast(e.message, true);

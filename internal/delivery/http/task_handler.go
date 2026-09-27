@@ -98,6 +98,8 @@ func handleErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusUnprocessableEntity, err.Error())
 	case errors.Is(err, domain.ErrUnauthorized):
 		writeError(w, http.StatusUnauthorized, err.Error())
+	case errors.Is(err, domain.ErrRegressionFailed):
+		writeError(w, http.StatusUnprocessableEntity, err.Error())
 	default:
 		writeError(w, http.StatusInternalServerError, err.Error())
 	}

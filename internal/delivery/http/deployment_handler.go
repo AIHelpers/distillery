@@ -36,7 +36,7 @@ func (h *DeploymentHandler) Deploy(w http.ResponseWriter, r *http.Request, taskI
 
 	_ = decodeJSON(r, &req) // autoscale defaults to false if omitted/absent.
 
-	d, apiKey, err := h.uc.Deploy(taskID, req.Autoscale)
+	d, apiKey, err := h.uc.Deploy(taskID, req.Autoscale, req.Force)
 	if err != nil {
 		handleErr(w, err)
 		return
@@ -52,7 +52,7 @@ func (h *DeploymentHandler) DeployVersion(w http.ResponseWriter, r *http.Request
 
 	_ = decodeJSON(r, &req)
 
-	d, apiKey, err := h.uc.DeployVersion(taskID, jobID, req.Autoscale)
+	d, apiKey, err := h.uc.DeployVersion(taskID, jobID, req.Autoscale, req.Force)
 	if err != nil {
 		handleErr(w, err)
 		return

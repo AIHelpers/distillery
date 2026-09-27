@@ -180,6 +180,78 @@
     "max_train_steps": {
       "type": "integer",
       "minimum": 1
+    },
+    "method": {
+      "type": "string",
+      "enum": [
+        "dpo",
+        "orpo"
+      ],
+      "description": "preference_lm: DPO or ORPO."
+    },
+    "beta": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "preference_lm: DPO/ORPO temperature."
+    },
+    "max_prompt_len": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "preference_lm: max tokenized prompt length."
+    },
+    "max_len": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "preference_lm: max tokenized prompt+completion length."
+    },
+    "parent_job_id": {
+      "type": "string",
+      "description": "preference_lm (dpo): the parent SFT job ID (lineage)."
+    },
+    "parent_adapter_dir": {
+      "type": "string",
+      "description": "preference_lm (dpo): path to the parent job's saved LoRA adapter \u2014 the DPO starting policy."
+    },
+    "stride": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "token_classifier: sliding-window stride."
+    },
+    "label_scheme": {
+      "type": "string",
+      "description": "token_classifier: tagging scheme, e.g. BIO."
+    },
+    "max_seq_len": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "embedding/reranker: max tokenized sequence length."
+    },
+    "loss": {
+      "type": "string",
+      "description": "embedding/reranker: loss function name."
+    },
+    "hard_negatives": {
+      "type": "boolean",
+      "description": "embedding: enable hard-negative mining."
+    },
+    "matryoshka": {
+      "type": "array",
+      "items": {
+        "type": "integer"
+      },
+      "description": "embedding: Matryoshka truncation dimensions."
+    },
+    "grad_cache": {
+      "type": "boolean",
+      "description": "embedding/reranker: enable GradCache for large effective batch sizes."
+    },
+    "normalize": {
+      "type": "boolean",
+      "description": "embedding: L2-normalize output embeddings."
+    },
+    "json_schema": {
+      "type": "string",
+      "description": "causal_lm (Track B): JSON schema the task's outputs must satisfy."
     }
   }
 }

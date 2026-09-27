@@ -89,6 +89,28 @@ type TrainingMetrics struct {
 	EntityR   float64                     `json:"entity_recall,omitempty"`
 	PartialF1 float64                     `json:"partial_entity_f1,omitempty"`
 	PerEntity map[string]PerEntityMetrics `json:"per_entity,omitempty"`
+
+	// Preference-tuning metrics (populated when Kind == KindPreferenceLM).
+	// RewardAccuracy / RewardMargin come straight from the DPO/ORPO trainer
+	// on the held-out preference split. WinRate is the fraction of held-out
+	// prompts where the candidate is preferred over the parent (filled in
+	// once a Compare-view vote or judge pass has run; 0 until then).
+	RewardAccuracy float64 `json:"reward_accuracy,omitempty"`
+	RewardMargin   float64 `json:"reward_margin,omitempty"`
+	WinRate        float64 `json:"win_rate,omitempty"`
+	WinRateVotes   int     `json:"win_rate_votes,omitempty"`
+	AvgChosenLen   float64 `json:"avg_chosen_len,omitempty"`
+	AvgRejectedLen float64 `json:"avg_rejected_len,omitempty"`
+	// Regression* report the plan's regression gate: the parent SFT job's
+	// primary eval metric re-run after preference tuning, so a DPO/ORPO run
+	// that drifted the model away from its SFT behavior can be blocked (or
+	// flagged) before deploy.
+	RegressionChecked bool    `json:"regression_checked,omitempty"`
+	RegressionMetric  string  `json:"regression_metric,omitempty"`
+	RegressionBase    float64 `json:"regression_base,omitempty"`
+	RegressionValue   float64 `json:"regression_value,omitempty"`
+	RegressionDelta   float64 `json:"regression_delta,omitempty"`
+	RegressionPassed  bool    `json:"regression_passed,omitempty"`
 }
 
 // TrainingJob represents one fine-tuning run for a task.
@@ -126,8 +148,11 @@ type TrainingJob struct {
 	Model ModelRecord `json:"model,omitempty"`
 	// ParentJobID links this job to the job it continues from (lineage for
 	// DPO and continued training). Empty for the first job in a lineage.
-	ParentJobID string     `json:"parent_job_id,omitempty"`
-	Seed        int        `json:"seed,omitempty"` // held-out split seed for reproducibility.
+	ParentJobID string `json:"parent_job_id,omitempty"`
+	// Preference holds the DPO/ORPO hyperparameters passed to a
+	// preference_lm training run (empty unless Kind == KindPreferenceLM).
+	Preference *PreferenceConfig `json:"preference,omitempty"`
+	Seed       int               `json:"seed,omitempty"` // held-out split seed for reproducibility.
 	CreatedAt   time.Time  `json:"created_at"`
 	StartedAt   *time.Time `json:"started_at,omitempty"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`

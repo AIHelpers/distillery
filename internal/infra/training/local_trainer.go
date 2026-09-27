@@ -425,6 +425,20 @@ func (l *LocalTrainer) readMetrics(ctx context.Context, jobDir string, runErr er
 		PartialF1 float64                            `json:"partial_micro_f1"`
 		PerEntity map[string]domain.PerEntityMetrics `json:"per_entity"`
 
+		// Preference-tuning metrics (preference_lm / DPO-ORPO tasks).
+		RewardAccuracy float64 `json:"reward_accuracy"`
+		RewardMargin   float64 `json:"reward_margin"`
+		WinRate        float64 `json:"win_rate"`
+		WinRateVotes   int     `json:"win_rate_votes"`
+		AvgChosenLen   float64 `json:"avg_chosen_len"`
+		AvgRejectedLen float64 `json:"avg_rejected_len"`
+		RegChecked     bool    `json:"regression_checked"`
+		RegMetric      string  `json:"regression_metric"`
+		RegBase        float64 `json:"regression_base"`
+		RegValue       float64 `json:"regression_value"`
+		RegDelta       float64 `json:"regression_delta"`
+		RegPassed      bool    `json:"regression_passed"`
+
 		// Retrieval metrics (embedding/reranker tasks).
 		TunedNDCG10   float64 `json:"tuned_ndcg@10"`
 		TunedMRR10    float64 `json:"tuned_mrr@10"`
@@ -474,14 +488,40 @@ func (l *LocalTrainer) readMetrics(ctx context.Context, jobDir string, runErr er
 		EntityR:   m.EntityR,
 		PartialF1: m.PartialF1,
 		PerEntity: m.PerEntity,
+		// Preference-tuning fields propagate so the UI can render reward
+		// accuracy/margin, the length-bias check, and the regression gate.
+		RewardAccuracy:    m.RewardAccuracy,
+		RewardMargin:      m.RewardMargin,
+		WinRate:           m.WinRate,
+		WinRateVotes:      m.WinRateVotes,
+		AvgChosenLen:      m.AvgChosenLen,
+		AvgRejectedLen:    m.AvgRejectedLen,
+		RegressionChecked: m.RegChecked,
+		RegressionMetric:  m.RegMetric,
+		RegressionBase:    m.RegBase,
+		RegressionValue:   m.RegValue,
+		RegressionDelta:   m.RegDelta,
+		RegressionPassed:  m.RegPassed,
 	}, nil
 }
 
 // vramPreflight checks free GPU memory against the model's MinVRAMGB.
 // Falls back to CPU mode when no GPU exists (unless disabled).
+// preferenceVRAMFactor accounts for DPO/ORPO scoring both the chosen and
+// rejected completion for every prompt (two completions' worth of
+// activations per step instead of SFT's one), even though the LoRA
+// reference model reuses the policy's weights with the adapter disabled
+// rather than doubling parameter memory.
+const preferenceVRAMFactor = 1.35
+
 func (l *LocalTrainer) vramPreflight(ctx context.Context, job *domain.TrainingJob) error {
 	if job.BaseModel.MinVRAMGB <= 0 {
 		return nil // no requirement — allow.
+	}
+
+	required := job.BaseModel.MinVRAMGB
+	if job.Kind == domain.KindPreferenceLM {
+		required *= preferenceVRAMFactor
 	}
 
 	freeGB, hasGPU := freeVRAMGB(ctx)
@@ -492,11 +532,11 @@ func (l *LocalTrainer) vramPreflight(ctx context.Context, job *domain.TrainingJo
 			return nil
 		}
 
-		return fmt.Errorf("%w: %s requires %.1f GiB; no NVIDIA GPU detected", ErrVRAMInsufficient, job.BaseModel.Name, job.BaseModel.MinVRAMGB)
+		return fmt.Errorf("%w: %s requires %.1f GiB; no NVIDIA GPU detected", ErrVRAMInsufficient, job.BaseModel.Name, required)
 	}
 
-	if freeGB < job.BaseModel.MinVRAMGB {
-		return fmt.Errorf("%w: %s needs %.1f GiB but only %.1f GiB free", ErrVRAMInsufficient, job.BaseModel.Name, job.BaseModel.MinVRAMGB, freeGB)
+	if freeGB < required {
+		return fmt.Errorf("%w: %s needs %.1f GiB but only %.1f GiB free", ErrVRAMInsufficient, job.BaseModel.Name, required, freeGB)
 	}
 
 	return nil
@@ -676,6 +716,24 @@ func (l *LocalTrainer) writeJobConfig(
 		cfg["epochs"] = job.NER.Epochs
 		cfg["learning_rate"] = job.NER.LearningRate
 		cfg["batch_size"] = job.NER.BatchSize
+	}
+
+	// Pass DPO/ORPO hyperparameters through to the worker when present, plus
+	// the parent SFT job's adapter directory: with LoRA, the reference model
+	// is the same base with the adapter disabled, so the trainer only needs
+	// the parent's adapter path, not a second copy of the base model.
+	if job.Preference != nil {
+		cfg["method"] = string(job.Preference.Method)
+		cfg["beta"] = job.Preference.Beta
+		cfg["learning_rate"] = job.Preference.LearningRate
+		cfg["epochs"] = job.Preference.Epochs
+		cfg["max_prompt_len"] = job.Preference.MaxPromptLen
+		cfg["max_len"] = job.Preference.MaxLen
+
+		if job.ParentJobID != "" && isSafeJobID(job.ParentJobID) {
+			cfg["parent_job_id"] = job.ParentJobID
+			cfg["parent_adapter_dir"] = filepath.Join(l.cfg.JobsDir, filepath.Base(job.ParentJobID), "adapter")
+		}
 	}
 
 	// Track B: pass the task's JSON schema to the worker so the SFT eval can

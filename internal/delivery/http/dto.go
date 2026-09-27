@@ -59,6 +59,9 @@ type updateExampleRequest struct {
 
 type deployRequest struct {
 	Autoscale bool `json:"autoscale"`
+	// Force overrides the DPO/ORPO regression gate (see the training
+	// usecase's regression check) and deploys anyway.
+	Force bool `json:"force,omitempty"`
 }
 
 type invokeRequest struct {
@@ -86,3 +89,11 @@ type mispredictionRequest struct {
 	ActualOutput   string `json:"actual_output"`
 	ExpectedOutput string `json:"expected_output"`
 }
+
+// preferencePairRequest is the body of POST /tasks/{id}/preferences.
+type preferencePairRequest struct {
+	Prompt   string `json:"prompt"`
+	Chosen   string `json:"chosen"`
+	Rejected string `json:"rejected"`
+}
+

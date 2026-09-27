@@ -16,20 +16,28 @@ func NewTrainingHandler(uc *usecase.TrainingUsecase) *TrainingHandler {
 	return &TrainingHandler{uc: uc}
 }
 
-// startTrainingRequest carries an optional user-chosen base model.
+// startTrainingRequest carries an optional user-chosen base model plus,
+// for a DPO/ORPO preference-tuning run, the method and parent SFT job.
 type startTrainingRequest struct {
-	BaseModel string `json:"base_model"`
+	BaseModel   string `json:"base_model"`
+	Method      string `json:"method,omitempty"`
+	ParentJobID string `json:"parent_job_id,omitempty"`
 }
 
 // Start POST /api/v1/tasks/{taskID}/training
-// Body (optional): {"base_model": "Llama-3.2-1B-Instruct"}.
+// Body (optional): {"base_model": "Llama-3.2-1B-Instruct"}, or, to start a
+// preference-tuning run: {"method": "dpo", "parent_job_id": "job_..."}.
 func (h *TrainingHandler) Start(w http.ResponseWriter, r *http.Request, taskID string) {
 	var req startTrainingRequest
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&req)
 	}
 
-	job, err := h.uc.StartTraining(taskID, req.BaseModel)
+	job, err := h.uc.StartTrainingWithOptions(taskID, usecase.TrainingStartOptions{
+		BaseModel:   req.BaseModel,
+		Method:      req.Method,
+		ParentJobID: req.ParentJobID,
+	})
 	if err != nil {
 		handleErr(w, err)
 		return
