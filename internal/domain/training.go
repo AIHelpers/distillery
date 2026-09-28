@@ -124,6 +124,24 @@ type TrainingMetrics struct {
 	BaselineFieldF1  float64                `json:"baseline_field_f1,omitempty"`
 	MacroFieldF1     float64                `json:"macro_field_f1,omitempty"`
 	DeltaFieldF1     float64                `json:"delta_field_f1,omitempty"`
+
+	// ASR metrics (populated when Kind == KindASR). WER/CER are the tuned
+	// model's word/character error rates on the held-out split (a fixed
+	// text normalizer applied to references and hypotheses); Base* are the
+	// un-fine-tuned base Whisper of the same size on the same split so the
+	// UI can show the gain. DomainTermRecall is the recall of a
+	// user-supplied domain glossary. RTF is the measured real-time factor
+	// (processing_time / audio_duration) on the training hardware.
+	WER              float64 `json:"wer,omitempty"`
+	CER              float64 `json:"cer,omitempty"`
+	BaseWER          float64 `json:"base_wer,omitempty"`
+	BaseCER          float64 `json:"base_cer,omitempty"`
+	DeltaWER         float64 `json:"delta_wer,omitempty"`
+	DomainTermRecall float64 `json:"domain_term_recall,omitempty"`
+	RTF              float64 `json:"rtf,omitempty"`
+	// ASR audio dataset stats (populated when Kind == KindASR).
+	TotalHours        float64          `json:"total_hours,omitempty"`
+	DurationHistogram []DurationBucket `json:"duration_histogram,omitempty"`
 }
 
 // TrainingJob represents one fine-tuning run for a task.
@@ -167,11 +185,14 @@ type TrainingJob struct {
 	Preference *PreferenceConfig `json:"preference,omitempty"`
 	// Vision holds the hyperparameters passed to a vision_lm training run
 	// (empty unless Kind == KindVisionLM).
-	Vision      *VisionConfig `json:"vision,omitempty"`
-	Seed        int           `json:"seed,omitempty"` // held-out split seed for reproducibility.
-	CreatedAt   time.Time     `json:"created_at"`
-	StartedAt   *time.Time    `json:"started_at,omitempty"`
-	CompletedAt *time.Time    `json:"completed_at,omitempty"`
+	Vision *VisionConfig `json:"vision,omitempty"`
+	// ASR holds the hyperparameters passed to an asr training run
+	// (empty unless Kind == KindASR).
+	ASR         *ASRConfig `json:"asr,omitempty"`
+	Seed        int        `json:"seed,omitempty"` // held-out split seed for reproducibility.
+	CreatedAt   time.Time  `json:"created_at"`
+	StartedAt   *time.Time `json:"started_at,omitempty"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
 }
 
 // TrainingJobRepository is the port for persisting training jobs.
@@ -200,7 +221,7 @@ type ModelSelector interface {
 	// SelectBaseModel is the legacy task-based selection (kept for
 	// backward compatibility); kind-aware callers should use Select.
 	SelectBaseModel(task *Task, exampleCount int, avgInputLen, avgOutputLen int) BaseModel
-	// Select picks the right-sized base model for a kind + dataset stats.
+	// Select picks the right-sized model for a kind + dataset stats.
 	Select(kind ModelKind, stats DatasetStats, constraints SelectionConstraints) BaseModel
 	// ListBaseModels returns the curated catalog of available base models
 	// the user can choose from.

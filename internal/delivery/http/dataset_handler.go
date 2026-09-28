@@ -320,6 +320,75 @@ func (h *DatasetHandler) PreferenceStats(w http.ResponseWriter, _ *http.Request,
 	writeJSON(w, http.StatusOK, stats)
 }
 
+// AddASRAudioExample POST /api/v1/tasks/{taskID}/examples/asr adds one
+// audio+transcript example. The audio is base64-encoded in the JSON body
+// (data-URL prefixes like "data:audio/wav;base64," are stripped).
+func (h *DatasetHandler) AddASRAudioExample(w http.ResponseWriter, r *http.Request, taskID string) {
+	var req addASRAudioExampleRequest
+
+	err := decodeJSON(r, &req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	if strings.TrimSpace(req.Text) == "" {
+		writeError(w, http.StatusBadRequest, "text (transcript) is required")
+		return
+	}
+
+	audioData, err := decodeImageBase64(req.AudioBase64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "audio_base64 is not valid base64 audio data")
+		return
+	}
+
+	filename := strings.TrimSpace(req.Filename)
+	if filename == "" {
+		filename = "clip.wav"
+	}
+
+	stats, err := h.uc.AddASRAudioExample(taskID, audioData, filename, req.Text, req.Speaker)
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, stats)
+}
+
+// ImportASRZIP POST /api/v1/tasks/{taskID}/examples/import-asr-zip
+// bulk-loads a ZIP archive of audio files plus a manifest.jsonl (see
+// docs/speech-asr.md for the manifest shape).
+func (h *DatasetHandler) ImportASRZIP(w http.ResponseWriter, r *http.Request, taskID string) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 500<<20)) // 500MB cap.
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read request body")
+		return
+	}
+
+	stats, err := h.uc.ImportASRZIP(taskID, body)
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, stats)
+}
+
+// ASRStats GET /api/v1/tasks/{taskID}/examples/asr-stats reports the
+// audio-side dataset summary (total hours, duration histogram, per-speaker
+// counts).
+func (h *DatasetHandler) ASRStats(w http.ResponseWriter, _ *http.Request, taskID string) {
+	stats, err := h.uc.ASRDatasetStats(taskID)
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, stats)
+}
+
 // AddVisionExample POST /api/v1/tasks/{taskID}/examples/vision adds one
 // image+prompt(+answer) example. The image is base64-encoded in the JSON
 // body (optionally prefixed with a data URL header, e.g.

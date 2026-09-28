@@ -100,6 +100,27 @@ type preferencePairRequest struct {
 	Rejected string `json:"rejected"`
 }
 
+// addASRAudioExampleRequest is the body of POST /tasks/{id}/examples/asr.
+// Audio is base64-encoded (data-URL prefixes like "data:audio/wav;base64,"
+// are stripped by the handler) so a single-clip add works as plain JSON
+// without a multipart round trip.
+type addASRAudioExampleRequest struct {
+	AudioBase64 string `json:"audio_base64"`
+	Filename    string `json:"filename,omitempty"`
+	Text        string `json:"text"`
+	Speaker     string `json:"speaker,omitempty"`
+}
+
+// transcribeRequest is the body of POST /inference/{id}/transcribe.
+// Audio is base64-encoded (data-URL prefixes are stripped).
+type transcribeRequest struct {
+	AudioBase64 string `json:"audio_base64"`
+	Filename    string `json:"filename,omitempty"`
+	// Language optionally pins the transcription language (ISO 639-1);
+	// empty lets the model auto-detect.
+	Language string `json:"language,omitempty"`
+}
+
 // addVisionExampleRequest is the body of POST /tasks/{id}/examples/vision.
 // Image is base64-encoded (data-URL prefixes like "data:image/png;base64,"
 // are stripped by the handler) so a single-image add works as plain JSON

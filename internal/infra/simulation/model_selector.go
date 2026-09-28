@@ -7,6 +7,7 @@ const quant4BitNF4 = "4bit-nf4"
 const (
 	exportFormatONNX        = "onnx"
 	exportFormatSafetensors = "safetensors"
+	exportFormatCTranslate2 = "ctranslate2"
 	languageMultilingual    = "multilingual"
 )
 
@@ -395,6 +396,84 @@ var defaultCatalog = []domain.BaseModel{
 			MaxImagePixels: 589_824, // 768x768.
 		},
 	},
+
+	// --- Speech-to-text (Whisper fine-tuning) ---.
+	// CTranslate2 (faster-whisper) is the primary serving format per plan
+	// 07 section 6; safetensors is the generic HF fallback.
+	{
+		Name:           "whisper-tiny",
+		ParamsBillions: 0.039,
+		Family:         "Whisper",
+		RepoID:         "openai/whisper-tiny",
+		Kind:           domain.KindASR,
+		Capabilities: domain.Capabilities{
+			SupportsLoRA:  false, // tiny trains fine fully on CPU.
+			ExportFormats: []string{exportFormatCTranslate2, exportFormatSafetensors},
+			RunsOnCPU:     true,
+			MaxSeqLen:     448, // 30 s @ 50 mel frames/second.
+			Languages:     []string{languageMultilingual},
+		},
+	},
+	{
+		Name:           "whisper-base",
+		ParamsBillions: 0.074,
+		Family:         "Whisper",
+		RepoID:         "openai/whisper-base",
+		Kind:           domain.KindASR,
+		Capabilities: domain.Capabilities{
+			SupportsLoRA:  false,
+			ExportFormats: []string{exportFormatCTranslate2, exportFormatSafetensors},
+			RunsOnCPU:     true,
+			MaxSeqLen:     448,
+			Languages:     []string{languageMultilingual},
+		},
+	},
+	{
+		Name:           "whisper-small",
+		ParamsBillions: 0.244,
+		Family:         "Whisper",
+		RepoID:         "openai/whisper-small",
+		Kind:           domain.KindASR,
+		Capabilities: domain.Capabilities{
+			// The plan's LoRA-on-a-single-GPU default for domain audio.
+			SupportsLoRA:  true,
+			ExportFormats: []string{exportFormatCTranslate2, exportFormatSafetensors},
+			RunsOnCPU:     true,
+			MaxSeqLen:     448,
+			Languages:     []string{languageMultilingual},
+		},
+	},
+	{
+		Name:           "whisper-medium",
+		ParamsBillions: 0.769,
+		Family:         "Whisper",
+		RepoID:         "openai/whisper-medium",
+		MinVRAMGB:      6,
+		Kind:           domain.KindASR,
+		Capabilities: domain.Capabilities{
+			SupportsLoRA:  true,
+			ExportFormats: []string{exportFormatCTranslate2, exportFormatSafetensors},
+			RunsOnCPU:     true,
+			MaxSeqLen:     448,
+			Languages:     []string{languageMultilingual},
+		},
+	},
+	{
+		Name:             "whisper-large-v3-turbo",
+		ParamsBillions:   0.809,
+		Family:           "Whisper",
+		RepoID:           "openai/whisper-large-v3-turbo",
+		MinVRAMGB:        8,
+		RecommendedQuant: quant4BitNF4,
+		Kind:             domain.KindASR,
+		Capabilities: domain.Capabilities{
+			SupportsLoRA:  true,
+			ExportFormats: []string{exportFormatCTranslate2, exportFormatSafetensors},
+			RunsOnCPU:     false,
+			MaxSeqLen:     448,
+			Languages:     []string{languageMultilingual},
+		},
+	},
 }
 
 // NewModelSelector returns a ModelSelector seeded with the default catalog.
@@ -509,18 +588,31 @@ func (s *ModelSelector) Select(
 
 // candidatesForKind returns the catalog entries suitable for the given kind,
 // defaulting to causal_lm entries when a kind has no specific entries yet.
+// Kinds that DO have dedicated entries never fall back to causal_lm models:
+// a speech task must not be auto-sized to a text LLM (same for vision, NER,
+// etc.), so the generic entries only apply when nothing better exists.
 func (s *ModelSelector) candidatesForKind(kind domain.ModelKind) []domain.BaseModel {
-	var out []domain.BaseModel
+	var (
+		specific []domain.BaseModel
+		generic  []domain.BaseModel
+	)
 
 	for i := range s.Catalog {
-		if s.Catalog[i].Kind == "" || s.Catalog[i].Kind == kind {
-			out = append(out, s.Catalog[i])
+		switch {
+		case s.Catalog[i].Kind == kind:
+			specific = append(specific, s.Catalog[i])
+		case s.Catalog[i].Kind == "":
+			generic = append(generic, s.Catalog[i])
 		}
 	}
 
-	if len(out) == 0 {
-		return s.Catalog // fall back to all (legacy behavior).
+	if len(specific) > 0 {
+		return specific
 	}
 
-	return out
+	if len(generic) > 0 {
+		return generic
+	}
+
+	return s.Catalog // fall back to all (legacy behavior).
 }
