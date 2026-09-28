@@ -78,7 +78,7 @@ func ValidateJSONSchema(schema string) error {
 
 // parseJSONSchema parses one schema node, validating the subset's structural
 // rules. path is used for error messages.
-func parseJSONSchema(raw string, path string) (*jsonSchema, error) {
+func parseJSONSchema(raw, path string) (*jsonSchema, error) {
 	var obj map[string]json.RawMessage
 
 	err := json.Unmarshal([]byte(raw), &obj)
@@ -89,27 +89,54 @@ func parseJSONSchema(raw string, path string) (*jsonSchema, error) {
 	s := &jsonSchema{Properties: map[string]*jsonSchema{}}
 
 	if t, ok := obj["type"]; ok {
-		var typeStr string
-		if json.Unmarshal(t, &typeStr) != nil {
-			// A type may be an array (union); take the first supported entry.
-			var typeList []string
-			if json.Unmarshal(t, &typeList) == nil {
-				for _, cand := range typeList {
-					if allowedSchemaTypes[cand] {
-						typeStr = cand
-						break
-					}
-				}
-			}
-		}
-
-		if !allowedSchemaTypes[typeStr] {
+		typeStr, ok := parseSchemaType(t)
+		if !ok {
 			return nil, &SchemaError{Path: path, Msg: fmt.Sprintf("unsupported or missing type %q", typeStr)}
 		}
 
 		s.Type = typeStr
 	}
 
+	parseSchemaScalarFields(obj, s)
+
+	err = parseSchemaProperties(obj, path, s)
+	if err != nil {
+		return nil, err
+	}
+
+	err = parseSchemaItems(obj, path, s)
+	if err != nil {
+		return nil, err
+	}
+
+	return s, nil
+}
+
+// parseSchemaType resolves a schema's "type" keyword to one of the
+// supported scalar type names. A type may be a single string or an array
+// (union); for a union, the first supported entry is used. ok is false
+// when no supported type could be determined.
+func parseSchemaType(t json.RawMessage) (typeStr string, ok bool) {
+	if json.Unmarshal(t, &typeStr) != nil {
+		// A type may be an array (union); take the first supported entry.
+		var typeList []string
+		if json.Unmarshal(t, &typeList) == nil {
+			for _, cand := range typeList {
+				if allowedSchemaTypes[cand] {
+					typeStr = cand
+					break
+				}
+			}
+		}
+	}
+
+	return typeStr, allowedSchemaTypes[typeStr]
+}
+
+// parseSchemaScalarFields fills in the simple, independently-parsed scalar
+// fields of s (everything except type, properties and items, which need
+// their own validation/recursion).
+func parseSchemaScalarFields(obj map[string]json.RawMessage, s *jsonSchema) {
 	_ = json.Unmarshal(obj["description"], &s.Description)
 	_ = json.Unmarshal(obj["required"], &s.Required)
 	_ = json.Unmarshal(obj["enum"], &s.Enum)
@@ -127,41 +154,57 @@ func parseJSONSchema(raw string, path string) (*jsonSchema, error) {
 		}
 	}
 
-	if props, ok := obj["properties"]; ok {
-		var propMap map[string]json.RawMessage
-		if json.Unmarshal(props, &propMap) != nil {
-			return nil, &SchemaError{Path: path, Msg: "properties must be an object"}
-		}
-
-		for name, propRaw := range propMap {
-			child, err := parseJSONSchema(string(propRaw), path+"/properties/"+name)
-			if err != nil {
-				return nil, err
-			}
-
-			s.Properties[name] = child
-		}
-
-		s.PropertyOrder = sortedKeys(propMap)
-	}
-
-	if items, ok := obj["items"]; ok {
-		child, err := parseJSONSchema(string(items), path+"/items")
-		if err != nil {
-			return nil, err
-		}
-
-		s.Items = child
-	}
-
 	s.Minimum = rawFloat(obj["minimum"])
 	s.Maximum = rawFloat(obj["maximum"])
 	s.MinLength = rawInt(obj["minLength"])
 	s.MaxLength = rawInt(obj["maxLength"])
 	s.MinItems = rawInt(obj["minItems"])
 	s.MaxItems = rawInt(obj["maxItems"])
+}
 
-	return s, nil
+// parseSchemaProperties parses the "properties" keyword (if present) into
+// s.Properties and s.PropertyOrder, recursing into each property schema.
+func parseSchemaProperties(obj map[string]json.RawMessage, path string, s *jsonSchema) error {
+	props, ok := obj["properties"]
+	if !ok {
+		return nil
+	}
+
+	var propMap map[string]json.RawMessage
+
+	if json.Unmarshal(props, &propMap) != nil {
+		return &SchemaError{Path: path, Msg: "properties must be an object"}
+	}
+
+	for name, propRaw := range propMap {
+		child, err := parseJSONSchema(string(propRaw), path+"/properties/"+name)
+		if err != nil {
+			return err
+		}
+
+		s.Properties[name] = child
+	}
+
+	s.PropertyOrder = sortedKeys(propMap)
+
+	return nil
+}
+
+// parseSchemaItems parses the "items" keyword (if present) into s.Items.
+func parseSchemaItems(obj map[string]json.RawMessage, path string, s *jsonSchema) error {
+	items, ok := obj["items"]
+	if !ok {
+		return nil
+	}
+
+	child, err := parseJSONSchema(string(items), path+"/items")
+	if err != nil {
+		return err
+	}
+
+	s.Items = child
+
+	return nil
 }
 
 // ValidateJSONAgainstSchema validates a JSON document against a schema string.
@@ -249,7 +292,8 @@ func validateString(s *jsonSchema, val, path string) error {
 	}
 
 	if s.Pattern != "" {
-		if re, err := regexp.Compile(s.Pattern); err == nil && !re.MatchString(val) {
+		re, err := regexp.Compile(s.Pattern)
+		if err == nil && !re.MatchString(val) {
 			return &SchemaError{Path: path, Msg: "string does not match pattern"}
 		}
 	}
@@ -292,7 +336,8 @@ func validateArray(s *jsonSchema, val []interface{}, path string) error {
 
 func validateObject(s *jsonSchema, val map[string]interface{}, path string) error {
 	for _, req := range s.Required {
-		if _, ok := val[req]; !ok {
+		_, ok := val[req]
+		if !ok {
 			return &SchemaError{Path: path, Msg: "missing required property " + strconv.Quote(req)}
 		}
 	}

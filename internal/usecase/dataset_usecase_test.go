@@ -1,6 +1,7 @@
 package usecase_test
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 	time "time"
@@ -615,5 +616,108 @@ func TestDatasetUsecase_Curate_TaskNotFound(t *testing.T) {
 	_, err := uc.Curate("missing")
 	if !errors.Is(err, domain.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+// --- Curate: vision_lm payloads ---.
+//
+// Curate's dedup key, quality flag, and JSON-validity checks all gained a
+// vision_lm branch (curationKey, qualityFlag, exampleOutputText in
+// dataset_usecase.go). dataset_usecase_vision_test.go covers
+// AddVisionExample/ImportVisionZIP but never exercises Curate itself, so
+// these branches were previously untested.
+
+func visionPayload(t *testing.T, image, prompt, answer string) json.RawMessage {
+	t.Helper()
+
+	raw, err := json.Marshal(domain.VisionPayload{Image: image, Prompt: prompt, Answer: answer, DocID: ""})
+	if err != nil {
+		t.Fatalf("marshal vision payload: %v", err)
+	}
+
+	return raw
+}
+
+func TestDatasetUsecase_Curate_Vision_DeduplicatesAndFlags(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Kind: domain.KindVisionLM, Type: domain.TaskExtraction, Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
+	examples := &mockExampleRepo{
+		byTask: []*domain.Example{
+			{ID: "e1", Source: domain.SourceUser, Payload: visionPayload(t, "blob/1.png", "Extract vendor as JSON.", `{"vendor":"Acme"}`)},
+			{ID: "e2", Source: domain.SourceUser, Payload: visionPayload(t, "blob/1.png", "Extract vendor as JSON.", `{"vendor":"Acme"}`)}, // duplicate: same image+prompt.
+			{ID: "e3", Source: domain.SourceUser, Payload: visionPayload(t, "", "Extract total as JSON.", `{"total":1}`)},                  // flagged: missing image.
+			{ID: "e4", Source: domain.SourceUser, Payload: visionPayload(t, "blob/2.png", "x", `{"total":1}`)},                             // flagged: prompt too short.
+		},
+	}
+	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
+
+	stats, err := uc.Curate("task_1")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if stats.Total != 4 {
+		t.Errorf("expected total 4, got %d", stats.Total)
+	}
+
+	if stats.Duplicates != 1 {
+		t.Errorf("expected 1 duplicate (same image+prompt), got %d", stats.Duplicates)
+	}
+
+	if stats.Flagged != 2 {
+		t.Errorf("expected 2 flagged (missing image, short prompt), got %d", stats.Flagged)
+	}
+
+	if stats.UsableCount != 1 {
+		t.Errorf("expected 1 usable example, got %d", stats.UsableCount)
+	}
+}
+
+func TestDatasetUsecase_Curate_Vision_DifferentPromptsNotDuplicates(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Kind: domain.KindVisionLM, Type: domain.TaskExtraction, Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
+	examples := &mockExampleRepo{
+		byTask: []*domain.Example{
+			{ID: "e1", Source: domain.SourceUser, Payload: visionPayload(t, "blob/1.png", "Extract vendor as JSON.", `{"vendor":"Acme"}`)},
+			{ID: "e2", Source: domain.SourceUser, Payload: visionPayload(t, "blob/1.png", "Extract total as JSON.", `{"total":1}`)}, // same image, different prompt: not a duplicate.
+		},
+	}
+	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
+
+	stats, err := uc.Curate("task_1")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if stats.Duplicates != 0 {
+		t.Errorf("expected 0 duplicates for same image with different prompts, got %d", stats.Duplicates)
+	}
+}
+
+func TestDatasetUsecase_Curate_Vision_JSONValidRateUsesAnswerField(t *testing.T) {
+	t.Parallel()
+
+	schema := `{"type": "object", "required": ["vendor"], "properties": {"vendor": {"type": "string"}}}`
+	tasks := &mockTaskRepo{task: &domain.Task{
+		ID: "task_1", Kind: domain.KindVisionLM, Type: domain.TaskExtraction, JSONSchema: schema,
+		Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{},
+	}}
+	examples := &mockExampleRepo{
+		byTask: []*domain.Example{
+			{ID: "e1", Source: domain.SourceUser, Payload: visionPayload(t, "blob/1.png", "Extract vendor as JSON.", `{"vendor":"Acme"}`)}, // valid against schema.
+			{ID: "e2", Source: domain.SourceUser, Payload: visionPayload(t, "blob/2.png", "Extract vendor as JSON.", `not json at all`)},   // invalid.
+		},
+	}
+	uc := newDatasetUsecase(tasks, examples, &mockSynthGen{})
+
+	stats, err := uc.Curate("task_1")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if stats.JSONValidRate != 0.5 {
+		t.Errorf("expected JSONValidRate 0.5 (1 of 2 answers valid), got %v", stats.JSONValidRate)
 	}
 }

@@ -49,7 +49,9 @@ func (s *CausalLMSchema) Validate(payload json.RawMessage) error {
 func (s *CausalLMSchema) Stats(examples []*domain.Example) domain.DatasetStats {
 	stats := domain.DatasetStats{
 		Kind:         domain.KindCausalLM,
-		LabelBalance: map[string]int{}, TaskID: "", Total: 0, Duplicates: 0, Flagged: 0, Synthetic: 0, UserProvided: 0, Feedback: 0, UsableCount: 0, ReadyToTrain: false, ReadinessReason: "",
+		LabelBalance: map[string]int{}, TaskID: "", Total: 0, Duplicates: 0,
+		Flagged: 0, Synthetic: 0, UserProvided: 0, Feedback: 0,
+		UsableCount: 0, ReadyToTrain: false, ReadinessReason: "",
 	}
 
 	for _, e := range examples {

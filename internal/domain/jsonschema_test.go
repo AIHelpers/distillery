@@ -59,6 +59,7 @@ func TestValidateJSONAgainstSchema_Valid(t *testing.T) {
 	}`
 
 	doc := `{"name": "Alice", "age": 30, "tags": ["admin", "user"]}`
+
 	err := domain.ValidateJSONAgainstSchema(schema, doc)
 	if err != nil {
 		t.Fatalf("expected document to satisfy schema, got: %v", err)
@@ -91,6 +92,8 @@ func TestValidateJSONAgainstSchema_Invalid(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			err := domain.ValidateJSONAgainstSchema(schema, tc.doc)
 			if err == nil {
 				t.Fatalf("expected error for %s: %s", tc.name, tc.doc)
@@ -127,7 +130,7 @@ func TestGenerateGBNF_Smoke(t *testing.T) {
 }
 
 func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && len(substr) > 0 && stringContains(s, substr))
+	return len(s) >= len(substr) && (s == substr || s != "" && substr != "" && stringContains(s, substr))
 }
 
 func stringContains(s, sub string) bool {

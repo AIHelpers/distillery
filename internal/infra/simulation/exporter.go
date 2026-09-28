@@ -58,7 +58,7 @@ func NewExporterWithGGUF(ggufExporter domain.GGUFExporter) *Exporter {
 // with an actionable message rather than fabricating a worthless
 // pseudo-random GGUF. When a converter is wired up but no trained weights
 // exist on disk, the converter falls back to base-model conversion.
-func (e *Exporter) BuildGGUF(task *domain.Task, job *domain.TrainingJob, opts domain.GGUFExportOptions) ([]byte, string, error) {
+func (e *Exporter) BuildGGUF(task *domain.Task, job *domain.TrainingJob, opts domain.GGUFExportOptions) (data []byte, filename string, err error) {
 	if job.Status != domain.TrainingCompleted {
 		return nil, "", domain.ErrNoModel
 	}
@@ -91,7 +91,7 @@ func (e *Exporter) GetGGUFProgress(sessionID string) *domain.GGUFProgressInfo {
 }
 
 // GetGGUFResult forwards to the wrapped converter's result retrieval.
-func (e *Exporter) GetGGUFResult(sessionID string) (string, string, error) {
+func (e *Exporter) GetGGUFResult(sessionID string) (path, filename string, err error) {
 	if asyncExp, ok := e.ggufExporter.(domain.AsyncGGUFExporter); ok {
 		return asyncExp.GetGGUFResult(sessionID)
 	}

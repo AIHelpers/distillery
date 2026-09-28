@@ -17,6 +17,21 @@ import (
 	"distillery/internal/domain"
 )
 
+// Sentinel errors for deployment/inference-engine mismatches and exporter
+// capability gaps.
+var (
+	ErrNotSequenceClassifier      = errors.New("deployment is not a sequence classifier model")
+	ErrNotTokenClassifier         = errors.New("deployment is not a token classifier model")
+	ErrNotVisionLanguageModel     = errors.New("deployment is not a vision-language model")
+	ErrNotEmbeddingModel          = errors.New("deployment is not an embedding model")
+	ErrNoDocsOnlyExamples         = errors.New("no docs-only examples found; import a corpus first (e.g. {\"document\": \"...\"})")
+	ErrMismatchedVectorCount      = errors.New("embedding engine returned a mismatched vector count")
+	ErrNotReranker                = errors.New("deployment is not a reranker model")
+	ErrGGUFExportUnsupported      = errors.New("configured exporter does not support GGUF conversion")
+	ErrAsyncGGUFUnsupported       = errors.New("configured exporter does not support async GGUF conversion")
+	ErrAsyncGGUFResultUnavailable = errors.New("async GGUF not available")
+)
+
 type DeploymentUsecase struct {
 	tasks       domain.TaskRepository
 	jobs        domain.TrainingJobRepository
@@ -287,7 +302,7 @@ func (u *DeploymentUsecase) InvokeClassify(deploymentID, apiKey, input string) (
 
 	engine, ok := u.engine.(domain.ClassifierInferenceEngine)
 	if !ok || engine == nil {
-		return domain.ClassifierPrediction{}, errors.New("deployment is not a sequence classifier model")
+		return domain.ClassifierPrediction{}, ErrNotSequenceClassifier
 	}
 
 	job, err := u.jobs.Get(d.TrainingJobID)
@@ -332,7 +347,7 @@ func (u *DeploymentUsecase) InvokeNER(deploymentID, apiKey, input string) (domai
 
 	engine, ok := u.engine.(domain.NERInferenceEngine)
 	if !ok || engine == nil {
-		return domain.NERPrediction{}, errors.New("deployment is not a token classifier model")
+		return domain.NERPrediction{}, ErrNotTokenClassifier
 	}
 
 	job, err := u.jobs.Get(d.TrainingJobID)
@@ -348,6 +363,50 @@ func (u *DeploymentUsecase) InvokeNER(deploymentID, apiKey, input string) (domai
 	pred, err := engine.PredictSpans(job, usable, input, d.LabelMap)
 	if err != nil {
 		return domain.NERPrediction{}, err
+	}
+
+	d.RequestCount++
+	_ = u.deployments.Update(d)
+
+	return pred, nil
+}
+
+// InvokeVision serves a deployed vision_lm model: an image plus a prompt in,
+// generated text (+ parsed JSON when it validates) out. It only works for
+// deployments whose kind is KindVisionLM.
+func (u *DeploymentUsecase) InvokeVision(deploymentID, apiKey string, imageBytes []byte, prompt string) (domain.VisionPrediction, error) {
+	d, err := u.deployments.Get(deploymentID)
+	if err != nil {
+		return domain.VisionPrediction{}, err
+	}
+
+	err = u.authorize(d, apiKey)
+	if err != nil {
+		return domain.VisionPrediction{}, err
+	}
+
+	if d.Status != domain.DeploymentActive {
+		return domain.VisionPrediction{}, domain.ErrNoDeployment
+	}
+
+	engine, ok := u.engine.(domain.VisionInferenceEngine)
+	if !ok || engine == nil {
+		return domain.VisionPrediction{}, ErrNotVisionLanguageModel
+	}
+
+	job, err := u.jobs.Get(d.TrainingJobID)
+	if err != nil {
+		return domain.VisionPrediction{}, err
+	}
+
+	usable, err := u.usableExamples(d.TaskID)
+	if err != nil {
+		return domain.VisionPrediction{}, err
+	}
+
+	pred, err := engine.PredictImage(job, usable, imageBytes, prompt)
+	if err != nil {
+		return domain.VisionPrediction{}, err
 	}
 
 	d.RequestCount++
@@ -382,7 +441,7 @@ func (u *DeploymentUsecase) Embed(deploymentID, apiKey string, inputs []string, 
 
 	engine, ok := u.engine.(domain.EmbeddingEngine)
 	if !ok || engine == nil {
-		return domain.EmbeddingResult{}, errors.New("deployment is not an embedding model")
+		return domain.EmbeddingResult{}, ErrNotEmbeddingModel
 	}
 
 	job, err := u.jobs.Get(d.TrainingJobID)
@@ -391,8 +450,8 @@ func (u *DeploymentUsecase) Embed(deploymentID, apiKey string, inputs []string, 
 	}
 
 	// Normalize the type to one of the two supported prefixes.
-	if embedType != "document" {
-		embedType = "query"
+	if embedType != fieldDocument {
+		embedType = fieldQuery
 	}
 
 	result := engine.Embed(job, inputs, embedType)
@@ -425,7 +484,7 @@ func (u *DeploymentUsecase) EmbedCorpus(deploymentID, apiKey string) (*domain.Co
 
 	engine, ok := u.engine.(domain.EmbeddingEngine)
 	if !ok || engine == nil {
-		return nil, nil, errors.New("deployment is not an embedding model")
+		return nil, nil, ErrNotEmbeddingModel
 	}
 
 	job, err := u.jobs.Get(d.TrainingJobID)
@@ -458,7 +517,7 @@ func (u *DeploymentUsecase) EmbedCorpus(deploymentID, apiKey string) (*domain.Co
 	}
 
 	if len(docTexts) == 0 {
-		return nil, nil, errors.New("no docs-only examples found; import a corpus first (e.g. {\"document\": \"...\"})")
+		return nil, nil, ErrNoDocsOnlyExamples
 	}
 
 	now := time.Now().UTC()
@@ -476,10 +535,10 @@ func (u *DeploymentUsecase) EmbedCorpus(deploymentID, apiKey string) (*domain.Co
 	}
 
 	// Embed every document at once (batching handled by the engine).
-	result := engine.Embed(job, docTexts, "document")
+	result := engine.Embed(job, docTexts, fieldDocument)
 
 	if len(result.Vectors) != len(docTexts) {
-		return nil, nil, errors.New("embedding engine returned a mismatched vector count")
+		return nil, nil, ErrMismatchedVectorCount
 	}
 
 	// Write CSV: text, then one column per vector component.
@@ -509,7 +568,8 @@ func (u *DeploymentUsecase) EmbedCorpus(deploymentID, apiKey string) (*domain.Co
 
 	cw.Flush()
 
-	if err := cw.Error(); err != nil {
+	err = cw.Error()
+	if err != nil {
 		return nil, nil, err
 	}
 
@@ -543,7 +603,7 @@ func (u *DeploymentUsecase) Rerank(deploymentID, apiKey, query string, documents
 
 	engine, ok := u.engine.(domain.RerankerInferenceEngine)
 	if !ok || engine == nil {
-		return domain.RerankResult{}, errors.New("deployment is not a reranker model")
+		return domain.RerankResult{}, ErrNotReranker
 	}
 
 	job, err := u.jobs.Get(d.TrainingJobID)
@@ -626,7 +686,7 @@ func (u *DeploymentUsecase) Export(taskID string) (data []byte, filename string,
 
 // ExportGGUF converts the task's latest completed model to GGUF format
 // (HomeBred-LLM / llama.cpp compatible) and returns the file bytes + download name.
-func (u *DeploymentUsecase) ExportGGUF(taskID string, opts domain.GGUFExportOptions) ([]byte, string, error) {
+func (u *DeploymentUsecase) ExportGGUF(taskID string, opts domain.GGUFExportOptions) (data []byte, filename string, err error) {
 	task, err := u.tasks.Get(taskID)
 	if err != nil {
 		return nil, "", err
@@ -641,7 +701,7 @@ func (u *DeploymentUsecase) ExportGGUF(taskID string, opts domain.GGUFExportOpti
 }
 
 // ExportGGUFVersion converts a specific completed job version to GGUF.
-func (u *DeploymentUsecase) ExportGGUFVersion(taskID, jobID string, opts domain.GGUFExportOptions) ([]byte, string, error) {
+func (u *DeploymentUsecase) ExportGGUFVersion(taskID, jobID string, opts domain.GGUFExportOptions) (data []byte, filename string, err error) {
 	task, err := u.tasks.Get(taskID)
 	if err != nil {
 		return nil, "", err
@@ -659,20 +719,18 @@ func (u *DeploymentUsecase) ExportGGUFVersion(taskID, jobID string, opts domain.
 	return u.exportGGUF(task, job, opts)
 }
 
-// exportGGUF routes to the configured GGUF exporter, guarding for the case
-// where the configured exporter does not implement domain.GGUFExporter.
-func (u *DeploymentUsecase) exportGGUF(task *domain.Task, job *domain.TrainingJob, opts domain.GGUFExportOptions) ([]byte, string, error) {
-	if job.Status != domain.TrainingCompleted {
-		return nil, "", domain.ErrNoModel
-	}
-
-	ggufExporter, ok := u.exporter.(domain.GGUFExporter)
-	if !ok || ggufExporter == nil {
-		return nil, "", errors.New("configured exporter does not support GGUF conversion")
-	}
-
-	return ggufExporter.BuildGGUF(task, job, opts)
-}
+// errGGUFUnsupportedVisionLM is returned when a GGUF export/conversion is
+// requested for a vision_lm job. Per the plan, GGUF export is only offered
+// "for verified architectures" — a multimodal projector's llama.cpp support
+// is architecture-specific and hasn't been verified for the vision_lm
+// catalog, so this is refused explicitly rather than attempting a
+// conversion pipeline built for text-only causal LMs and producing a
+// broken or misleading artifact.
+var errGGUFUnsupportedVisionLM = fmt.Errorf(
+	"%w: GGUF export is not supported for vision-language models "+
+		"(unverified llama.cpp multimodal support) — use the portable safetensors export instead",
+	domain.ErrInvalidInput,
+)
 
 // StartGGUFAsync starts an async GGUF conversion and returns a session ID
 // for polling progress. If the exporter doesn't support async conversion,
@@ -701,9 +759,13 @@ func (u *DeploymentUsecase) StartGGUFAsync(taskID, jobID, sessionID string, opts
 		return domain.ErrNoModel
 	}
 
+	if job.Kind == domain.KindVisionLM {
+		return errGGUFUnsupportedVisionLM
+	}
+
 	asyncExporter, ok := u.exporter.(domain.AsyncGGUFExporter)
 	if !ok || asyncExporter == nil {
-		return errors.New("configured exporter does not support async GGUF conversion")
+		return ErrAsyncGGUFUnsupported
 	}
 
 	asyncExporter.StartGGUFAsync(sessionID, taskID, jobID, task, job, opts)
@@ -715,7 +777,7 @@ func (u *DeploymentUsecase) StartGGUFAsync(taskID, jobID, sessionID string, opts
 func (u *DeploymentUsecase) GetGGUFProgress(sessionID string) (*domain.GGUFProgressInfo, error) {
 	asyncExporter, ok := u.exporter.(domain.AsyncGGUFExporter)
 	if !ok || asyncExporter == nil {
-		return nil, errors.New("async GGUF not available")
+		return nil, ErrAsyncGGUFResultUnavailable
 	}
 
 	p := asyncExporter.GetGGUFProgress(sessionID)
@@ -729,10 +791,10 @@ func (u *DeploymentUsecase) GetGGUFProgress(sessionID string) (*domain.GGUFProgr
 // GetGGUFResult returns the file path and filename for a ready session.
 // The caller streams the file directly from disk — it is never loaded
 // into memory.
-func (u *DeploymentUsecase) GetGGUFResult(sessionID string) (string, string, error) {
+func (u *DeploymentUsecase) GetGGUFResult(sessionID string) (path, filename string, err error) {
 	asyncExporter, ok := u.exporter.(domain.AsyncGGUFExporter)
 	if !ok || asyncExporter == nil {
-		return "", "", errors.New("async GGUF not available")
+		return "", "", ErrAsyncGGUFResultUnavailable
 	}
 
 	return asyncExporter.GetGGUFResult(sessionID)
@@ -751,6 +813,25 @@ func (u *DeploymentUsecase) CleanupGGUFSession(sessionID string) {
 }
 
 // --- unexported helpers ---.
+
+// exportGGUF routes to the configured GGUF exporter, guarding for the case
+// where the configured exporter does not implement domain.GGUFExporter.
+func (u *DeploymentUsecase) exportGGUF(task *domain.Task, job *domain.TrainingJob, opts domain.GGUFExportOptions) (data []byte, filename string, err error) {
+	if job.Status != domain.TrainingCompleted {
+		return nil, "", domain.ErrNoModel
+	}
+
+	if job.Kind == domain.KindVisionLM {
+		return nil, "", errGGUFUnsupportedVisionLM
+	}
+
+	ggufExporter, ok := u.exporter.(domain.GGUFExporter)
+	if !ok || ggufExporter == nil {
+		return nil, "", ErrGGUFExportUnsupported
+	}
+
+	return ggufExporter.BuildGGUF(task, job, opts)
+}
 
 func (u *DeploymentUsecase) deployJob(
 	taskID string,

@@ -63,7 +63,7 @@ func (h *TaskHandler) Update(w http.ResponseWriter, r *http.Request, taskID stri
 		return
 	}
 
-	t, err := h.uc.UpdateTask(taskID, req.Name, req.Description, req.LabelSet, req.JSONSchema)
+	t, err := h.uc.UpdateTask(taskID, req.Name, req.Description, req.LabelSet, req.JSONSchema, req.RetentionDays)
 	if err != nil {
 		handleErr(w, err)
 		return

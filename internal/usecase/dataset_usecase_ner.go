@@ -21,6 +21,9 @@ import (
 // maxNERLine caps one imported line/document (10 MiB) to bound memory.
 const maxNERLine = 10 << 20
 
+// errNERTextEmpty is returned when a NER example's text field is blank.
+var errNERTextEmpty = errors.New("text is empty")
+
 // nerJSONLPayload is the accepted JSONL span record (spans may be listed
 // under "entities", "spans", or "labels").
 type nerJSONLPayload struct {
@@ -87,7 +90,8 @@ func (u *DatasetUsecase) ImportNERJSONL(taskID, content string) (*domain.Dataset
 		return nil, domain.ErrInvalidInput
 	}
 
-	if err := u.examples.AddBatch(batch); err != nil {
+	err = u.examples.AddBatch(batch)
+	if err != nil {
 		return nil, err
 	}
 
@@ -145,7 +149,8 @@ func (u *DatasetUsecase) ImportCoNLL(taskID, content string) (*domain.DatasetSta
 		return nil, domain.ErrInvalidInput
 	}
 
-	if err := u.examples.AddBatch(batch); err != nil {
+	err = u.examples.AddBatch(batch)
+	if err != nil {
 		return nil, err
 	}
 
@@ -224,96 +229,122 @@ func bioTagsToSpans(tokens, tags []string) []domain.EntitySpan {
 		return nil
 	}
 
-	tokStarts := make([]int, len(tokens))
-	tokEnds := make([]int, len(tokens))
+	tokStarts, tokEnds := tokenOffsets(tokens)
+
+	b := &bioSpanBuilder{spans: make([]domain.EntitySpan, 0, len(tokens)/2+1)}
+
+	for i := range tokens {
+		prefix, label := splitBIOTag(tags[i])
+		prevEnd := 0
+
+		if i > 0 {
+			prevEnd = tokEnds[i-1]
+		}
+
+		b.step(prefix, label, tokStarts[i], tokEnds[i], prevEnd)
+	}
+
+	b.closeSpan(b.openEnd())
+
+	return b.spans
+}
+
+// tokenOffsets computes the start/end character offsets of each token in
+// the whitespace-joined token text.
+func tokenOffsets(tokens []string) (starts, ends []int) {
+	starts = make([]int, len(tokens))
+	ends = make([]int, len(tokens))
 
 	curr := 0
 	for i, tok := range tokens {
-		tokStarts[i] = curr
-		tokEnds[i] = curr + len(tok)
-		curr = tokEnds[i] + 1
+		starts[i] = curr
+		ends[i] = curr + len(tok)
+		curr = ends[i] + 1
 	}
 
-	spans := make([]domain.EntitySpan, 0, len(tokens)/2+1)
+	return starts, ends
+}
 
-	type openSpan struct {
-		label string
-		start int
-		end   int
+// splitBIOTag splits a BIO/BILOU tag such as "B-PERSON" into its prefix
+// ("B") and label ("PERSON"). A blank tag is treated as "O", and a tag with
+// no "-" separator is returned unsplit (prefix == label == tag).
+func splitBIOTag(raw string) (prefix, label string) {
+	tag := strings.TrimSpace(raw)
+	if tag == "" {
+		tag = "O"
 	}
 
-	var open *openSpan
+	prefix, label = tag, tag
 
-	closeSpan := func(end int) {
-		if open != nil {
-			spans = append(spans, domain.EntitySpan{Start: open.start, End: end, Label: open.label})
-			open = nil
+	if len(tag) > 2 && tag[1] == '-' {
+		prefix, label = tag[:1], tag[2:]
+	}
+
+	return prefix, label
+}
+
+// bioSpanBuilder accumulates entity spans while walking a BIO/BILOU tag
+// sequence token by token.
+type bioSpanBuilder struct {
+	spans []domain.EntitySpan
+	open  *bioOpenSpan
+}
+
+type bioOpenSpan struct {
+	label string
+	start int
+	end   int
+}
+
+// openEnd returns the end offset of the currently open span, or 0 if none
+// is open (closeSpan is a no-op in that case).
+func (b *bioSpanBuilder) openEnd() int {
+	if b.open == nil {
+		return 0
+	}
+
+	return b.open.end
+}
+
+// closeSpan finalizes the currently open span (if any) at the given end
+// offset and appends it to spans.
+func (b *bioSpanBuilder) closeSpan(end int) {
+	if b.open != nil {
+		b.spans = append(b.spans, domain.EntitySpan{Start: b.open.start, End: end, Label: b.open.label})
+		b.open = nil
+	}
+}
+
+// step processes one token's BIO/BILOU prefix and label, updating the
+// currently open span and/or emitting a completed span as needed.
+// prevTokEnd is the end offset of the previous token (used to close a
+// span that ended before the current token).
+func (b *bioSpanBuilder) step(prefix, label string, tokStart, tokEnd, prevTokEnd int) {
+	switch prefix {
+	case "B":
+		b.closeSpan(prevTokEnd)
+		b.open = &bioOpenSpan{label: label, start: tokStart, end: tokEnd}
+	case "I":
+		if b.open == nil || b.open.label != label {
+			b.closeSpan(prevTokEnd)
+			b.open = &bioOpenSpan{label: label, start: tokStart, end: tokEnd}
+		} else {
+			b.open.end = tokEnd
 		}
-	}
-
-	for i := range tokens {
-		tag := strings.TrimSpace(tags[i])
-		if tag == "" {
-			tag = "O"
+	case "L":
+		if b.open != nil && b.open.label == label {
+			b.closeSpan(tokEnd)
+		} else {
+			b.closeSpan(prevTokEnd)
+			b.spans = append(b.spans, domain.EntitySpan{Start: tokStart, End: tokEnd, Label: label})
 		}
-
-		prefix := tag
-		label := tag
-
-		if len(tag) > 2 && tag[1] == '-' {
-			prefix = tag[:1]
-			label = tag[2:]
-		}
-
-		tokStart := tokStarts[i]
-		tokEnd := tokEnds[i]
-
-		switch prefix {
-		case "B":
-			if open != nil {
-				closeSpan(tokEnds[i-1])
-			}
-
-			open = &openSpan{label: label, start: tokStart, end: tokEnd}
-		case "I":
-			if open == nil || open.label != label {
-				if open != nil {
-					closeSpan(tokEnds[i-1])
-				}
-
-				open = &openSpan{label: label, start: tokStart, end: tokEnd}
-			} else {
-				open.end = tokEnd
-			}
-		case "L":
-			if open != nil && open.label == label {
-				closeSpan(tokEnd)
-			} else {
-				if open != nil {
-					closeSpan(tokEnds[i-1])
-				}
-
-				spans = append(spans, domain.EntitySpan{Start: tokStart, End: tokEnd, Label: label})
-			}
-		case "U":
-			if open != nil {
-				closeSpan(tokEnds[i-1])
-			}
-
-			spans = append(spans, domain.EntitySpan{Start: tokStart, End: tokEnd, Label: label})
-		default:
-			// "O" or other.
-			if open != nil {
-				closeSpan(tokEnds[i-1])
-			}
-		}
+	case "U":
+		b.closeSpan(prevTokEnd)
+		b.spans = append(b.spans, domain.EntitySpan{Start: tokStart, End: tokEnd, Label: label})
+	default:
+		// "O" or other.
+		b.closeSpan(prevTokEnd)
 	}
-
-	if open != nil {
-		closeSpan(open.end)
-	}
-
-	return spans
 }
 
 // ImportNERCSV bulk-loads span annotations from CSV. Two shapes are accepted:
@@ -397,7 +428,8 @@ func (u *DatasetUsecase) ImportNERCSV(taskID, content string) (*domain.DatasetSt
 		return nil, domain.ErrInvalidInput
 	}
 
-	if err := u.examples.AddBatch(batch); err != nil {
+	err = u.examples.AddBatch(batch)
+	if err != nil {
 		return nil, err
 	}
 
@@ -445,7 +477,7 @@ func detectNERColumns(header []string) (textCol, entsCol int, spanCols []int, st
 // task's LabelSet.
 func (u *DatasetUsecase) validateNERSpans(task *domain.Task, text string, spans []domain.EntitySpan) error {
 	if strings.TrimSpace(text) == "" {
-		return errors.New("text is empty")
+		return errNERTextEmpty
 	}
 
 	return domain.ValidateEntitySpans(text, spans, task.LabelSet)

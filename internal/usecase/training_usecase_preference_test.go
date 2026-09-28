@@ -9,24 +9,24 @@ import (
 )
 
 // newPreferenceExamples returns a mixed set of causal_lm (legacy, Kind=="")
-// and preference_lm examples for the same task, so tests can verify
-// startTraining only feeds the worker examples of the kind it's training.
-func newPreferenceExamples(taskID string, prefPayloads []string) []*domain.Example {
-	var out []*domain.Example
+// and preference_lm examples for task_1, so tests can verify startTraining
+// only feeds the worker examples of the kind it's training.
+func newPreferenceExamples(prefPayloads []string) []*domain.Example {
+	const taskID = "task_1"
 
-	for i := 0; i < 3; i++ {
+	out := make([]*domain.Example, 0, 3+len(prefPayloads))
+
+	for range 3 {
 		out = append(out, &domain.Example{ID: "sft_ex", TaskID: taskID, Input: "in", Output: "out"})
 	}
 
-	for i, p := range prefPayloads {
+	for _, p := range prefPayloads {
 		out = append(out, &domain.Example{
 			ID:      "pref_ex",
 			TaskID:  taskID,
 			Kind:    domain.KindPreferenceLM,
 			Payload: []byte(p),
 		})
-
-		_ = i
 	}
 
 	return out
@@ -36,7 +36,7 @@ func TestStartTrainingWithOptions_DPO_RequiresParent(t *testing.T) {
 	t.Parallel()
 
 	task := &domain.Task{ID: "task_1", Kind: domain.KindCausalLM}
-	examples := &mockExampleRepo{byTask: newPreferenceExamples("task_1", []string{
+	examples := &mockExampleRepo{byTask: newPreferenceExamples([]string{
 		`{"prompt":"p1","chosen":"good","rejected":"bad"}`,
 		`{"prompt":"p2","chosen":"good2","rejected":"bad2"}`,
 		`{"prompt":"p3","chosen":"good3","rejected":"bad3"}`,
@@ -58,7 +58,7 @@ func TestStartTrainingWithOptions_DPO_RejectsNonCausalLMParent(t *testing.T) {
 
 	task := &domain.Task{ID: "task_1", Kind: domain.KindCausalLM}
 	parent := &domain.TrainingJob{ID: "job_parent", TaskID: "task_1", Kind: domain.KindSeqClassifier, Status: domain.TrainingCompleted}
-	examples := &mockExampleRepo{byTask: newPreferenceExamples("task_1", []string{
+	examples := &mockExampleRepo{byTask: newPreferenceExamples([]string{
 		`{"prompt":"p1","chosen":"good","rejected":"bad"}`,
 		`{"prompt":"p2","chosen":"good2","rejected":"bad2"}`,
 		`{"prompt":"p3","chosen":"good3","rejected":"bad3"}`,
@@ -84,7 +84,7 @@ func TestStartTrainingWithOptions_DPO_Success(t *testing.T) {
 		ID: "job_parent", TaskID: "task_1", Version: 1,
 		Kind: domain.KindCausalLM, Status: domain.TrainingCompleted, BaseModel: parentBase,
 	}
-	examples := &mockExampleRepo{byTask: newPreferenceExamples("task_1", []string{
+	examples := &mockExampleRepo{byTask: newPreferenceExamples([]string{
 		`{"prompt":"p1","chosen":"good","rejected":"bad"}`,
 		`{"prompt":"p2","chosen":"good2","rejected":"bad2"}`,
 		`{"prompt":"p3","chosen":"good3","rejected":"bad3"}`,
@@ -139,7 +139,7 @@ func TestStartTrainingWithOptions_ORPO_NoParentRequired(t *testing.T) {
 	t.Parallel()
 
 	task := &domain.Task{ID: "task_1", Kind: domain.KindCausalLM}
-	examples := &mockExampleRepo{byTask: newPreferenceExamples("task_1", []string{
+	examples := &mockExampleRepo{byTask: newPreferenceExamples([]string{
 		`{"prompt":"p1","chosen":"good","rejected":"bad"}`,
 		`{"prompt":"p2","chosen":"good2","rejected":"bad2"}`,
 		`{"prompt":"p3","chosen":"good3","rejected":"bad3"}`,
@@ -168,7 +168,7 @@ func TestStartTrainingWithOptions_InvalidMethod(t *testing.T) {
 	t.Parallel()
 
 	task := &domain.Task{ID: "task_1", Kind: domain.KindCausalLM}
-	examples := &mockExampleRepo{byTask: newPreferenceExamples("task_1", nil)}
+	examples := &mockExampleRepo{byTask: newPreferenceExamples(nil)}
 	uc := usecase.NewTrainingUsecase(
 		&mockTaskRepo{task: task}, examples, &mockTrainingRepo{},
 		&mockModelSelector{model: domain.BaseModel{Name: "Qwen3-1.7B"}}, &mockFineTuner{}, &mockIDGen{},
@@ -187,7 +187,7 @@ func TestStartTraining_Backcompat_UnaffectedByPreferenceOptions(t *testing.T) {
 	// training as an ordinary SFT run through the original StartTraining
 	// entry point — no method/parent involved.
 	task := &domain.Task{ID: "task_1", Kind: domain.KindCausalLM}
-	examples := &mockExampleRepo{byTask: newPreferenceExamples("task_1", nil)}
+	examples := &mockExampleRepo{byTask: newPreferenceExamples(nil)}
 	uc := usecase.NewTrainingUsecase(
 		&mockTaskRepo{task: task}, examples, &mockTrainingRepo{},
 		&mockModelSelector{model: domain.BaseModel{Name: "Qwen3-1.7B"}}, &mockFineTuner{}, &mockIDGen{},

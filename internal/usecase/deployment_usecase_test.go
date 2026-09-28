@@ -1218,3 +1218,67 @@ func TestDeploymentUsecase_Rerank_DeploymentNotFound(t *testing.T) {
 		t.Errorf("expected ErrNotFound, got %v", err)
 	}
 }
+
+// --- GGUF export: refused for vision_lm (unverified multimodal llama.cpp support) ---.
+
+func TestDeploymentUsecase_ExportGGUF_RefusesVisionLM(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
+	jobs := &mockTrainingRepo{
+		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Kind: domain.KindVisionLM, Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
+	}
+	uc := newDeploymentUsecase(tasks, jobs, &mockExampleRepo{}, &mockDeploymentRepo{}, &mockInferenceEngine{}, &mockExporter{})
+
+	_, _, err := uc.ExportGGUF("task_1", domain.GGUFExportOptions{})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	}
+}
+
+func TestDeploymentUsecase_ExportGGUFVersion_RefusesVisionLM(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
+	jobs := &mockTrainingRepo{
+		job: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Kind: domain.KindVisionLM, Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
+	}
+	uc := newDeploymentUsecase(tasks, jobs, &mockExampleRepo{}, &mockDeploymentRepo{}, &mockInferenceEngine{}, &mockExporter{})
+
+	_, _, err := uc.ExportGGUFVersion("task_1", "job_1", domain.GGUFExportOptions{})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	}
+}
+
+func TestDeploymentUsecase_StartGGUFAsync_RefusesVisionLM(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
+	jobs := &mockTrainingRepo{
+		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Kind: domain.KindVisionLM, Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
+	}
+	uc := newDeploymentUsecase(tasks, jobs, &mockExampleRepo{}, &mockDeploymentRepo{}, &mockInferenceEngine{}, &mockExporter{})
+
+	err := uc.StartGGUFAsync("task_1", "", "session_1", domain.GGUFExportOptions{})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	}
+}
+
+// TestDeploymentUsecase_ExportGGUF_AllowsCausalLM guards against the new
+// vision_lm check accidentally over-matching every kind.
+func TestDeploymentUsecase_ExportGGUF_AllowsCausalLM(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Name: "", Description: "", Type: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
+	jobs := &mockTrainingRepo{
+		latestCompleted: &domain.TrainingJob{ID: "job_1", TaskID: "task_1", Kind: domain.KindCausalLM, Status: domain.TrainingCompleted, Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil},
+	}
+	uc := newDeploymentUsecase(tasks, jobs, &mockExampleRepo{}, &mockDeploymentRepo{}, &mockInferenceEngine{}, &mockExporter{})
+
+	_, _, err := uc.ExportGGUF("task_1", domain.GGUFExportOptions{})
+	if errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("expected causal_lm export to not be refused as unsupported, got %v", err)
+	}
+}

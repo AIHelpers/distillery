@@ -39,7 +39,7 @@ func (e *SpanValidationError) Error() string { return e.Msg }
 // label set. The offset is added to every span index before validation (used
 // for CSV rows that carry absolute offsets into a shared document).
 func ValidateEntitySpans(text string, spans []EntitySpan, allowedLabels []string) error {
-	if len(text) == 0 {
+	if text == "" {
 		return &SpanValidationError{Index: -1, Msg: "text is required"}
 	}
 

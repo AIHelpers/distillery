@@ -186,7 +186,15 @@ func copyTree(src, dest, root string) error {
 	// (trusted) root. The `rel` check above already guarantees it cannot
 	// contain `..`; `strings.ReplaceAll` is a recognised gosec sanitizer,
 	// so `target` is provably rooted and the G703 taint check passes.
-	target := filepath.Join(root, strings.ReplaceAll(strings.ReplaceAll(rel, "..", "_"), "/", "_"))
+	//
+	// Only `..` is neutralized here — NOT the OS path separator. This used
+	// to also replace filepath.Separator with "_", which flattened every
+	// nested path into a single mangled filename (a source tree copied
+	// two-plus levels deep — e.g. "my-model/pytorch_model.bin" — landed at
+	// "root/my-model_pytorch_model.bin" instead of
+	// "root/my-model/pytorch_model.bin", since `rel` grows one path segment
+	// per recursion level as copyTree recurses into subdirectories).
+	target := filepath.Join(root, strings.ReplaceAll(rel, "..", "_"))
 
 	st, err := os.Stat(src)
 	if err != nil {

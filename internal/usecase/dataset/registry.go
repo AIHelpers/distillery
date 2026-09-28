@@ -5,10 +5,7 @@
 package dataset
 
 import (
-	"encoding/json"
-	"errors"
 	"fmt"
-	"strings"
 
 	"distillery/internal/domain"
 )
@@ -33,6 +30,7 @@ func NewRegistry() *Registry {
 	register(&EmbeddingSchema{})
 	register(&RerankerSchema{})
 	register(&PreferenceLMSchema{})
+	register(&VisionSchema{})
 
 	return r
 }
@@ -74,47 +72,4 @@ func (r *Registry) SchemaForTask(t *domain.Task) domain.DatasetSchema {
 	}
 
 	return r.MustSchema(kind)
-}
-
-// --- Helpers shared by the per-kind schemas ---.
-
-// normalizePayload decodes a JSON object payload, erroring on malformed JSON.
-func normalizePayload(payload []byte) (map[string]interface{}, error) {
-	if len(payload) == 0 {
-		return nil, errors.New("payload is empty")
-	}
-
-	var m map[string]interface{}
-
-	err := jsonUnmarshal(payload, &m)
-	if err != nil {
-		return nil, fmt.Errorf("payload is not a JSON object: %w", err)
-	}
-
-	return m, nil
-}
-
-// jsonUnmarshal is a tiny indirection so the package doesn't hardcode json
-// everywhere (also lets tests inject a fake).
-var jsonUnmarshal = func(b []byte, v interface{}) error {
-	return jsonUnmarshalImpl(b, v)
-}
-
-func jsonUnmarshalImpl(b []byte, v interface{}) error {
-	return json.Unmarshal(b, v)
-}
-
-// getString extracts a trimmed non-empty string field from a payload map.
-func getString(m map[string]interface{}, keys ...string) (string, bool) {
-	for _, k := range keys {
-		if v, ok := m[k]; ok && v != nil {
-			if s, ok := v.(string); ok {
-				if s = strings.TrimSpace(s); s != "" {
-					return s, true
-				}
-			}
-		}
-	}
-
-	return "", false
 }

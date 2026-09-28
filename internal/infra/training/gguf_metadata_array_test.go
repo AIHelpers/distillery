@@ -1,9 +1,11 @@
-package training
+package training_test
 
 import (
 	"bytes"
 	"encoding/binary"
 	"testing"
+
+	"distillery/internal/infra/training"
 )
 
 // TestGGUFMetadataKeys_ArrayLayoutRoundTrip verifies ARRAY value parsing with
@@ -22,41 +24,45 @@ func TestGGUFMetadataKeys_ArrayLayoutRoundTrip(t *testing.T) {
 
 	// Header: magic + version(3) + n_tensors(0) + n_kv(3).
 	buf.WriteString("GGUF")
-	binary.Write(buf, binary.LittleEndian, uint32(3))
-	binary.Write(buf, binary.LittleEndian, uint64(0))
-	binary.Write(buf, binary.LittleEndian, uint64(3))
+	_ = binary.Write(buf, binary.LittleEndian, uint32(3))
+	_ = binary.Write(buf, binary.LittleEndian, uint64(0))
+	_ = binary.Write(buf, binary.LittleEndian, uint64(3))
 
 	writeKV := func(key string, vtype uint32) {
-		binary.Write(buf, binary.LittleEndian, uint64(len(key)))
+		_ = binary.Write(buf, binary.LittleEndian, uint64(len(key)))
 		buf.WriteString(key)
-		binary.Write(buf, binary.LittleEndian, vtype)
+		_ = binary.Write(buf, binary.LittleEndian, vtype)
 	}
 
 	// 1) tokenizer.ggml.model = STRING("qwen3").
 	writeKV("tokenizer.ggml.model", 8)
-	binary.Write(buf, binary.LittleEndian, uint64(len("qwen3")))
+
+	_ = binary.Write(buf, binary.LittleEndian, uint64(len("qwen3")))
 	buf.WriteString("qwen3")
 
 	// 2) tokenizer.ggml.merges = ARRAY[STRING] of 2.
 	writeKV("tokenizer.ggml.merges", 9)
-	binary.Write(buf, binary.LittleEndian, uint32(8)) // elem string.
-	binary.Write(buf, binary.LittleEndian, uint64(2))
+
+	_ = binary.Write(buf, binary.LittleEndian, uint32(8)) // elem string.
+	_ = binary.Write(buf, binary.LittleEndian, uint64(2))
 
 	for _, s := range []string{"a b", "c d"} {
-		binary.Write(buf, binary.LittleEndian, uint64(len(s)))
+		_ = binary.Write(buf, binary.LittleEndian, uint64(len(s)))
 		buf.WriteString(s)
 	}
 
 	// 3) tokenizer.ggml.scores = ARRAY[FLOAT32] of 2.
 	writeKV("tokenizer.ggml.scores", 9)
-	binary.Write(buf, binary.LittleEndian, uint32(6)) // elem float32.
-	binary.Write(buf, binary.LittleEndian, uint64(2))
+
+	_ = binary.Write(buf, binary.LittleEndian, uint32(6)) // elem float32.
+	_ = binary.Write(buf, binary.LittleEndian, uint64(2))
 
 	var f float32 = 0.5
-	binary.Write(buf, binary.LittleEndian, f)
-	binary.Write(buf, binary.LittleEndian, f)
 
-	keys, err := ggufMetadataKeysReader(bytes.NewReader(buf.Bytes()), "array-roundtrip.gguf")
+	_ = binary.Write(buf, binary.LittleEndian, f)
+	_ = binary.Write(buf, binary.LittleEndian, f)
+
+	keys, err := ggufKeysFromBytes(t, buf.Bytes(), "array-roundtrip.gguf")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -72,7 +78,7 @@ func TestGGUFMetadataKeys_ArrayLayoutRoundTrip(t *testing.T) {
 		}
 	}
 
-	if !GGUFHasTokenizerKeys(keys) {
+	if !training.GGUFHasTokenizerKeys(keys) {
 		t.Error("expected tokenizer keys to be detected")
 	}
 }

@@ -19,6 +19,13 @@ type DatasetUsecase struct {
 	examples domain.ExampleRepository
 	synthGen domain.SyntheticGenerator
 	idGen    IDGenerator
+	// blobs stores vision_lm example images. Nil when the server wasn't
+	// wired with a blob store (vision import methods then return a clear
+	// error rather than panicking).
+	blobs domain.BlobStore
+	// pdfRasterizer rasterizes uploaded PDFs into page images for vision_lm
+	// import. Nil disables the PDF import endpoint with a clear error.
+	pdfRasterizer domain.PDFRasterizer
 }
 
 func NewDatasetUsecase(
@@ -33,6 +40,20 @@ func NewDatasetUsecase(
 		synthGen: synthGen,
 		idGen:    idGen,
 	}
+}
+
+// WithBlobStore attaches the blob store used for vision_lm example images.
+// Returns the same usecase for chaining at wiring time.
+func (u *DatasetUsecase) WithBlobStore(b domain.BlobStore) *DatasetUsecase {
+	u.blobs = b
+	return u
+}
+
+// WithPDFRasterizer attaches the PDF-to-images rasterizer used by the vision
+// PDF import endpoint. Returns the same usecase for chaining at wiring time.
+func (u *DatasetUsecase) WithPDFRasterizer(p domain.PDFRasterizer) *DatasetUsecase {
+	u.pdfRasterizer = p
+	return u
 }
 
 type ExamplePair struct {
@@ -260,13 +281,14 @@ func (u *DatasetUsecase) Curate(taskID string) (*domain.DatasetStats, error) {
 
 		flagged, note := qualityFlag(e)
 
-		if flagged {
+		switch {
+		case flagged:
 			e.Flagged = true
 			e.FlagNote = note
-		} else if holdout {
+		case holdout:
 			e.Flagged = false
 			e.FlagNote = "holdout:query_group"
-		} else {
+		default:
 			e.Flagged = false
 			e.FlagNote = ""
 		}
@@ -308,6 +330,16 @@ func (u *DatasetUsecase) Curate(taskID string) (*domain.DatasetStats, error) {
 	return stats, nil
 }
 
+// exampleOutputText returns the text an example's JSON-schema check should
+// run against: the legacy Output field, or a vision_lm example's Answer.
+func exampleOutputText(e *domain.Example) string {
+	if _, _, answer, ok := visionPayloadFields(e); ok {
+		return answer
+	}
+
+	return e.Output
+}
+
 // jsonValidRate returns the fraction of usable examples whose output parses
 // as JSON and satisfies the task schema.
 func jsonValidRate(schema string, examples []*domain.Example) float64 {
@@ -318,7 +350,7 @@ func jsonValidRate(schema string, examples []*domain.Example) float64 {
 			continue
 		}
 
-		out := strings.TrimSpace(e.Output)
+		out := strings.TrimSpace(exampleOutputText(e))
 		if out == "" {
 			continue
 		}
@@ -344,6 +376,10 @@ func jsonValidRate(schema string, examples []*domain.Example) float64 {
 func curationKey(e *domain.Example) string {
 	if text, ok := nerPayloadText(e); ok {
 		return "ner:" + strings.ToLower(text)
+	}
+
+	if image, prompt, _, ok := visionPayloadFields(e); ok {
+		return "vision:" + image + "\x00" + strings.ToLower(prompt)
 	}
 
 	if prompt, chosen, rejected, ok := preferencePayloadFields(e); ok {
@@ -392,6 +428,23 @@ func nerPayloadText(e *domain.Example) (string, bool) {
 	}
 
 	return probe.Text, true
+}
+
+// visionPayloadFields extracts image/prompt/answer from a vision_lm payload.
+// It returns ok=false for other payload shapes (distinguished by requiring
+// a non-empty "image" field, which no other kind's payload uses).
+func visionPayloadFields(e *domain.Example) (image, prompt, answer string, ok bool) {
+	if len(e.Payload) == 0 {
+		return "", "", "", false
+	}
+
+	var p domain.VisionPayload
+
+	if json.Unmarshal(e.Payload, &p) != nil || strings.TrimSpace(p.Image) == "" {
+		return "", "", "", false
+	}
+
+	return strings.TrimSpace(p.Image), strings.TrimSpace(p.Prompt), strings.TrimSpace(p.Answer), true
 }
 
 // preferencePayloadFields extracts prompt/chosen/rejected from a
@@ -443,51 +496,88 @@ func payloadFields(e *domain.Example) (query, positive, negative, doc string) {
 // input==output noise.
 func qualityFlag(e *domain.Example) (flagged bool, note string) {
 	if len(e.Payload) == 0 {
-		// Text-only kind: check Input/Output directly.
-		if len(e.Input) < minInputLen {
-			return true, "input too short"
-		}
-
-		if len(e.Output) < minOutputLen {
-			return true, "output too short"
-		}
-
-		if strings.EqualFold(strings.TrimSpace(e.Input), strings.TrimSpace(e.Output)) {
-			return true, "input and output are identical"
-		}
-
-		return false, ""
+		return textQualityFlag(e)
 	}
 
 	// NER kind (typed Payload with text/entities present).
 	if text, ok := nerPayloadText(e); ok {
-		if len(strings.TrimSpace(text)) < minInputLen {
-			return true, "text too short"
-		}
+		return nerQualityFlag(text)
+	}
 
-		return false, ""
+	// Vision kind (typed Payload with image/prompt/answer).
+	if image, prompt, _, ok := visionPayloadFields(e); ok {
+		return visionQualityFlag(image, prompt)
 	}
 
 	// Preference kind (typed Payload with prompt/chosen/rejected).
 	if prompt, chosen, rejected, ok := preferencePayloadFields(e); ok {
-		if len(prompt) < minInputLen {
-			return true, "prompt too short"
-		}
-
-		if chosen == "" || rejected == "" {
-			return true, "chosen/rejected must not be empty"
-		}
-
-		if strings.EqualFold(chosen, rejected) {
-			return true, "chosen and rejected are identical"
-		}
-
-		return false, ""
+		return preferenceQualityFlag(prompt, chosen, rejected)
 	}
 
 	// Retrieval kind (typed Payload present).
 	query, positive, _, doc := payloadFields(e)
 
+	return retrievalQualityFlag(query, positive, doc)
+}
+
+// textQualityFlag flags a plain Input/Output example (no typed Payload).
+func textQualityFlag(e *domain.Example) (flagged bool, note string) {
+	if len(e.Input) < minInputLen {
+		return true, "input too short"
+	}
+
+	if len(e.Output) < minOutputLen {
+		return true, "output too short"
+	}
+
+	if strings.EqualFold(strings.TrimSpace(e.Input), strings.TrimSpace(e.Output)) {
+		return true, "input and output are identical"
+	}
+
+	return false, ""
+}
+
+// nerQualityFlag flags an NER (token_classifier) example.
+func nerQualityFlag(text string) (flagged bool, note string) {
+	if len(strings.TrimSpace(text)) < minInputLen {
+		return true, "text too short"
+	}
+
+	return false, ""
+}
+
+// visionQualityFlag flags a vision_lm example.
+func visionQualityFlag(image, prompt string) (flagged bool, note string) {
+	if image == "" {
+		return true, "missing image"
+	}
+
+	if len(prompt) < minInputLen {
+		return true, "prompt too short"
+	}
+
+	return false, ""
+}
+
+// preferenceQualityFlag flags a preference-tuning (DPO/ORPO) example.
+func preferenceQualityFlag(prompt, chosen, rejected string) (flagged bool, note string) {
+	if len(prompt) < minInputLen {
+		return true, "prompt too short"
+	}
+
+	if chosen == "" || rejected == "" {
+		return true, "chosen/rejected must not be empty"
+	}
+
+	if strings.EqualFold(chosen, rejected) {
+		return true, "chosen and rejected are identical"
+	}
+
+	return false, ""
+}
+
+// retrievalQualityFlag flags a retrieval (embedding/reranker) example.
+func retrievalQualityFlag(query, positive, doc string) (flagged bool, note string) {
 	if query != "" && positive != "" && strings.EqualFold(strings.TrimSpace(query), strings.TrimSpace(positive)) {
 		return true, "query and positive document are identical"
 	}

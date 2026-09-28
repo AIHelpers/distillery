@@ -81,7 +81,8 @@ func (s *TokenClassifierSchema) Validate(payload json.RawMessage) error {
 	// Entities are optional — unlabeled text is a valid (neutral) sample —
 	// but when present, every span must satisfy the NER span contract:
 	// in-bounds, end > start, non-overlapping, valid label.
-	if err := domain.ValidateEntitySpans(p.Text, p.Spans, nil); err != nil {
+	err = domain.ValidateEntitySpans(p.Text, p.Spans, nil)
+	if err != nil {
 		return &schemaError{kind: domain.KindTokenClassifier, msg: "invalid entity span: " + err.Error()}
 	}
 
@@ -137,19 +138,6 @@ const (
 //	docs only: {"document"} (no query — used for synthetic query generation)
 type EmbeddingSchema struct{}
 
-// embeddingPairPayload is the JSON shape for a pair-style embedding example.
-type embeddingPairPayload struct {
-	Query    string `json:"query"`
-	Positive string `json:"positive"`
-}
-
-// embeddingTripletPayload is the JSON shape for a triplet-style embedding example.
-type embeddingTripletPayload struct {
-	Query    string `json:"query"`
-	Positive string `json:"positive"`
-	Negative string `json:"negative"`
-}
-
 // EmbeddingDocPayload is the JSON shape for a docs-only embedding example.
 type EmbeddingDocPayload struct {
 	Document string `json:"document"`
@@ -169,7 +157,11 @@ func (s *EmbeddingSchema) Validate(payload json.RawMessage) error {
 
 	err := json.Unmarshal(payload, &probe)
 	if err != nil {
-		return &schemaError{kind: domain.KindEmbedding, msg: "payload must be a JSON object with query/positive (pair), query/positive/negative (triplet), or document (docs-only) fields"}
+		return &schemaError{
+			kind: domain.KindEmbedding,
+			msg: "payload must be a JSON object with query/positive (pair), " +
+				"query/positive/negative (triplet), or document (docs-only) fields",
+		}
 	}
 
 	// Docs-only.
@@ -323,6 +315,65 @@ func (s *PreferenceLMSchema) Formats() []domain.ImportFormat {
 	return []domain.ImportFormat{domain.FormatJSONL}
 }
 
+// --- Vision-language (document AI) ---.
+
+// VisionSchema validates payloads for vision-language training:
+// {"image": "<blob key>", "prompt": "...", "answer": "..."}. Image and
+// prompt are required; answer may be empty for examples awaiting human
+// correction of an LLM pre-fill (mirrors NER's "unlabeled text is a valid
+// neutral sample").
+type VisionSchema struct{}
+
+// Kind implements domain.DatasetSchema.
+func (s *VisionSchema) Kind() domain.ModelKind { return domain.KindVisionLM }
+
+// Validate implements domain.DatasetSchema.
+func (s *VisionSchema) Validate(payload json.RawMessage) error {
+	var p domain.VisionPayload
+
+	err := json.Unmarshal(payload, &p)
+	if err != nil {
+		return &schemaError{kind: domain.KindVisionLM, msg: "payload must be a JSON object with image/prompt/answer fields"}
+	}
+
+	if strings.TrimSpace(p.Image) == "" {
+		return &schemaError{kind: domain.KindVisionLM, msg: "image (blob key) is required"}
+	}
+
+	if strings.TrimSpace(p.Prompt) == "" {
+		return &schemaError{kind: domain.KindVisionLM, msg: "prompt is required"}
+	}
+
+	return nil
+}
+
+// Stats implements domain.DatasetSchema.
+func (s *VisionSchema) Stats(examples []*domain.Example) domain.DatasetStats {
+	stats := genericStats(domain.KindVisionLM, examples)
+
+	stats.LabelBalance = map[string]int{"answered": 0, "needs_answer": 0}
+
+	for _, e := range examples {
+		if e.Duplicate || e.Flagged {
+			continue
+		}
+
+		var p domain.VisionPayload
+		if len(e.Payload) > 0 && json.Unmarshal(e.Payload, &p) == nil && strings.TrimSpace(p.Answer) != "" {
+			stats.LabelBalance["answered"]++
+		} else {
+			stats.LabelBalance["needs_answer"]++
+		}
+	}
+
+	return stats
+}
+
+// Formats implements domain.DatasetSchema.
+func (s *VisionSchema) Formats() []domain.ImportFormat {
+	return []domain.ImportFormat{domain.FormatJSONL}
+}
+
 // embeddingStats computes stats for embedding datasets, distinguishing the
 // number of pair vs triplet vs docs-only examples.
 func embeddingStats(examples []*domain.Example) domain.DatasetStats {
@@ -425,7 +476,9 @@ func classificationStats(kind domain.ModelKind, examples []*domain.Example) doma
 func genericStats(kind domain.ModelKind, examples []*domain.Example) domain.DatasetStats {
 	stats := domain.DatasetStats{
 		Kind:         kind,
-		LabelBalance: map[string]int{}, TaskID: "", Total: 0, Duplicates: 0, Flagged: 0, Synthetic: 0, UserProvided: 0, Feedback: 0, UsableCount: 0, ReadyToTrain: false, ReadinessReason: "",
+		LabelBalance: map[string]int{}, TaskID: "", Total: 0, Duplicates: 0,
+		Flagged: 0, Synthetic: 0, UserProvided: 0, Feedback: 0,
+		UsableCount: 0, ReadyToTrain: false, ReadinessReason: "",
 	}
 
 	for _, e := range examples {

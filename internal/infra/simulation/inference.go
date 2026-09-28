@@ -238,6 +238,58 @@ func dropOverlaps(entities []domain.Entity) []domain.Entity {
 	return out
 }
 
+// PredictImage implements domain.VisionInferenceEngine. It ignores the raw
+// image bytes (there's no real vision tower in the demo backend) and instead
+// finds the training example whose *prompt* is most similar to the request
+// prompt — mirroring PredictSpans' nearest-neighbour approach — then returns
+// that example's stored answer. This exercises the vision_lm API shape
+// (text + parsed JSON + json_valid) without requiring real trained weights.
+func (e *InferenceEngine) PredictImage(
+	job *domain.TrainingJob,
+	trainingExamples []*domain.Example,
+	_ []byte,
+	prompt string,
+) (domain.VisionPrediction, error) {
+	if len(trainingExamples) == 0 {
+		return domain.VisionPrediction{Text: "(no training data available)"}, nil
+	}
+
+	promptTokens := tokenize(prompt)
+
+	var best *domain.VisionPayload
+
+	bestScore := -1.0
+
+	for _, ex := range trainingExamples {
+		var p domain.VisionPayload
+		if len(ex.Payload) == 0 || json.Unmarshal(ex.Payload, &p) != nil || p.Image == "" {
+			continue
+		}
+
+		score := jaccard(promptTokens, tokenize(p.Prompt))
+		if score > bestScore {
+			bestScore = score
+			cp := p
+			best = &cp
+		}
+	}
+
+	if best == nil || strings.TrimSpace(best.Answer) == "" {
+		return domain.VisionPrediction{Text: "(no answer available for this prompt yet -- add a labeled example)"}, nil
+	}
+
+	text := best.Answer
+
+	var parsed any
+
+	jsonValid := json.Unmarshal([]byte(text), &parsed) == nil
+	if job != nil && job.JSONSchema != "" {
+		jsonValid = jsonValid && domain.ValidateJSONAgainstSchema(job.JSONSchema, text) == nil
+	}
+
+	return domain.VisionPrediction{Text: text, JSON: parsed, JSONValid: jsonValid}, nil
+}
+
 // Embed implements domain.EmbeddingEngine by returning a deterministic
 // vector per input so the /embed endpoint has a working shape without real
 // trained weights. The dim matches the training job's recorded

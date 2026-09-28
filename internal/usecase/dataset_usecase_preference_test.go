@@ -41,7 +41,8 @@ func TestAddPreferencePair_Success(t *testing.T) {
 		Rejected string `json:"rejected"`
 	}
 
-	if err := json.Unmarshal(ex.Payload, &payload); err != nil {
+	err = json.Unmarshal(ex.Payload, &payload)
+	if err != nil {
 		t.Fatalf("malformed payload: %v", err)
 	}
 

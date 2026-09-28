@@ -29,9 +29,14 @@ type Task struct {
 	// JSONSchema is a JSON Schema (draft-07 subset) that Track B extraction
 	// outputs must satisfy: validated at import time and used to generate
 	// llama.cpp GBNF for schema-constrained decoding at inference.
-	JSONSchema string    `json:"json_schema,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	JSONSchema string `json:"json_schema,omitempty"`
+	// RetentionDays bounds how long uploaded images/blobs for a vision_lm
+	// task are kept before an automatic sweep deletes them (images often
+	// carry PII/financial data). 0 = domain.DefaultImageRetentionDays applies
+	// for vision_lm tasks; ignored for other kinds.
+	RetentionDays int       `json:"retention_days,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // TaskRepository is the port for persisting tasks.

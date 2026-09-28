@@ -1,15 +1,16 @@
-package simulation
+package simulation_test
 
 import (
 	"testing"
 
 	"distillery/internal/domain"
+	"distillery/internal/infra/simulation"
 )
 
 func TestModelSelector_ListIncludesSeqClassifierModels(t *testing.T) {
 	t.Parallel()
 
-	ms := NewModelSelector()
+	ms := simulation.NewModelSelector()
 	models := ms.ListBaseModels()
 
 	var seqModels []domain.BaseModel
@@ -39,7 +40,7 @@ func TestModelSelector_ListIncludesSeqClassifierModels(t *testing.T) {
 func TestInferenceEngine_PredictClassification(t *testing.T) {
 	t.Parallel()
 
-	engine := NewInferenceEngine()
+	engine := simulation.NewInferenceEngine()
 	job := &domain.TrainingJob{
 		Kind: domain.KindSeqClassifier,
 		Metrics: &domain.TrainingMetrics{

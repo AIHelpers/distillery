@@ -4,9 +4,11 @@ import (
 	"archive/zip"
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -22,15 +24,33 @@ import (
 // subprocess may run before it is killed. Models can be large; 2h default.
 const GGUFConversionTimeout = 2 * time.Hour
 
-// ggufManifest mirrors the Python converter's gguf-manifest.json so we can
-// read back the produced file name + size without globbing.
-type ggufManifest struct {
-	File      string `json:"file"`
-	SizeBytes int64  `json:"size_bytes"`
-	Format    string `json:"format"`
-	BaseModel string `json:"base_model"`
-	Converter string `json:"converter"`
-}
+// ErrAsyncGGUFUnavailable is returned when async GGUF progress tracking is
+// not configured on this exporter (Progress is nil).
+var ErrAsyncGGUFUnavailable = errors.New("async GGUF not available")
+
+// ErrGGUFSessionNotFound is returned when a GGUF session ID has no tracked
+// progress (never started, already cleaned up, or from a prior process).
+var ErrGGUFSessionNotFound = errors.New("session not found")
+
+// ErrGGUFNotReady is returned when the caller asks for a GGUF result before
+// its conversion session has finished; the current status is wrapped
+// alongside it.
+var ErrGGUFNotReady = errors.New("conversion not ready")
+
+// ErrGGUFLockTimeout is returned when acquireGGUFLock/acquireWindowsLock give
+// up waiting for another in-progress conversion to release its lock file.
+var ErrGGUFLockTimeout = errors.New("timed out waiting for GGUF conversion lock")
+
+// ErrGGUFConversionTimeout is returned when the conversion subprocess is
+// killed after exceeding GGUFConversionTimeout.
+var ErrGGUFConversionTimeout = errors.New("GGUF conversion timed out")
+
+// ErrNoGGUFFile is returned when a job directory has no .gguf file to serve.
+var ErrNoGGUFFile = errors.New("no *.gguf file found")
+
+// ErrAmbiguousGGUFFile is returned when a job directory has more than one
+// .gguf file and PreferredGGUF can't tell which one to serve.
+var ErrAmbiguousGGUFFile = errors.New("multiple *.gguf files; cannot pick one")
 
 // LocalExporter implements domain.Exporter and domain.GGUFExporter for the
 // local training backend. It builds the same portable zip as the simulation
@@ -154,7 +174,37 @@ func (e *LocalExporter) BuildExport(task *domain.Task, job *domain.TrainingJob) 
 //     file prevents two goroutines/processes from running redundant
 //     conversions simultaneously.
 //   - **Timeout** — the subprocess is killed after GGUFConversionTimeout.
-func (e *LocalExporter) BuildGGUF(task *domain.Task, job *domain.TrainingJob, opts domain.GGUFExportOptions) ([]byte, string, error) {
+//
+// readCachedGGUF checks whether a valid, complete cached GGUF already exists
+// at cachedPath. It returns (nil, "", nil) when there is no usable cache
+// (the caller should proceed to convert), non-nil data plus a download
+// filename when the cache hit, or a non-nil error when a cache entry exists
+// but fails the completeness gate (in which case it is removed so a
+// subsequent request triggers a fresh conversion instead of repeatedly
+// failing).
+func readCachedGGUF(cachedPath, outputName string, version int, expectedName string) (data []byte, filename string, err error) {
+	if !FileExists(cachedPath) {
+		return nil, "", nil
+	}
+
+	// Completeness gate: refuse to serve an incomplete cached GGUF.
+	err = ValidateGGUFCompleteness(cachedPath)
+	if err != nil {
+		_ = os.Remove(cachedPath)
+		return nil, "", err
+	}
+
+	data, err = os.ReadFile(cachedPath)
+	if err != nil || len(data) == 0 {
+		return nil, "", nil
+	}
+
+	filename = fmt.Sprintf("%s-v%d-%s.gguf", outputName, version, strings.TrimSuffix(expectedName, ".gguf"))
+
+	return data, filename, nil
+}
+
+func (e *LocalExporter) BuildGGUF(task *domain.Task, job *domain.TrainingJob, opts domain.GGUFExportOptions) (data []byte, filename string, err error) {
 	if job.Status != domain.TrainingCompleted {
 		return nil, "", domain.ErrNoModel
 	}
@@ -164,7 +214,9 @@ func (e *LocalExporter) BuildGGUF(task *domain.Task, job *domain.TrainingJob, op
 	mergedDir := filepath.Join(jobDir, "model")
 
 	outputDir := filepath.Join(jobDir, "gguf")
-	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+
+	err = os.MkdirAll(outputDir, 0o755)
+	if err != nil {
 		return nil, "", err
 	}
 
@@ -179,20 +231,14 @@ func (e *LocalExporter) BuildGGUF(task *domain.Task, job *domain.TrainingJob, op
 	expectedName := fmt.Sprintf("%s-%s.gguf", outputName, quantization)
 
 	cachedPath := filepath.Join(outputDir, expectedName)
-	if FileExists(cachedPath) {
-		// Completeness gate: refuse to serve an incomplete cached GGUF.
-		err := ValidateGGUFCompleteness(cachedPath)
-		if err != nil {
-			// The cache entry is broken — remove it so a subsequent request
-			// triggers a fresh conversion instead of repeatedly failing.
-			_ = os.Remove(cachedPath)
-			return nil, "", err
-		}
 
-		if data, err := os.ReadFile(cachedPath); err == nil && len(data) > 0 {
-			filename := fmt.Sprintf("%s-v%d-%s.gguf", outputName, job.Version, strings.TrimSuffix(expectedName, ".gguf"))
-			return data, filename, nil
-		}
+	data, filename, err = readCachedGGUF(cachedPath, outputName, job.Version, expectedName)
+	if err != nil {
+		return nil, "", err
+	}
+
+	if data != nil {
+		return data, filename, nil
 	}
 
 	// ---- Concurrency lock per job + quant ----.
@@ -206,47 +252,47 @@ func (e *LocalExporter) BuildGGUF(task *domain.Task, job *domain.TrainingJob, op
 
 	if !acquired {
 		// Another conversion in-flight — wait and re-check cache.
-		if FileExists(cachedPath) {
-			// Completeness gate: refuse to serve an incomplete cached GGUF.
-			err := ValidateGGUFCompleteness(cachedPath)
-			if err != nil {
-				_ = os.Remove(cachedPath)
-				return nil, "", err
-			}
+		data, filename, err = readCachedGGUF(cachedPath, outputName, job.Version, expectedName)
+		if err != nil {
+			return nil, "", err
+		}
 
-			if data, err := os.ReadFile(cachedPath); err == nil && len(data) > 0 {
-				filename := fmt.Sprintf("%s-v%d-%s.gguf", outputName, job.Version, strings.TrimSuffix(expectedName, ".gguf"))
-				return data, filename, nil
-			}
+		if data != nil {
+			return data, filename, nil
 		}
 	}
 
-	args := []string{"-m", "trainer.gguf"}
-	args = append(args, "--job-dir", jobDir)
-	args = append(args, "--base-model", job.BaseModel.RepoID)
-	args = append(args, "--quantization", quantization)
-	args = append(args, "--output-name", outputName)
 	// Explicitly request GGUF v3 — required for qwen3 and other modern
 	// architectures. Passed explicitly so the export is always v3 even if
 	// the Python-side default changes.
-	args = append(args, "--gguf-version", "3")
+	args := []string{
+		"-m", "trainer.gguf",
+		"--job-dir", jobDir,
+		"--base-model", job.BaseModel.RepoID,
+		"--quantization", quantization,
+		"--output-name", outputName,
+		"--gguf-version", "3",
+	}
 
 	if e.ModelCacheDir != "" {
 		args = append(args, "--cache-dir", e.ModelCacheDir)
 	}
 
-	if DirExists(adapterDir) {
+	switch {
+	case DirExists(adapterDir):
 		args = append(args, "--adapter", adapterDir)
-	} else if DirExists(mergedDir) {
+	case DirExists(mergedDir):
 		args = append(args, "--model-dir", mergedDir)
-	} else {
+	default:
 		// No trained weights on disk (e.g. simulation backend). Fall back
 		// to converting the base model itself so the user still gets a
 		// real, full-size, loadable GGUF — not a fake pseudo-random file.
 		args = append(args, "--base-model-only")
 	}
 
-	cmd := exec.Command(e.PythonBin, args...)
+	// No request context is threaded through here; runWithTimeout below
+	// already enforces GGUFConversionTimeout by killing the process itself.
+	cmd := exec.CommandContext(context.Background(), e.PythonBin, args...)
 
 	// Timeout the conversion subprocess so a hung converter can't block
 	// the HTTP handler indefinitely.
@@ -270,17 +316,18 @@ func (e *LocalExporter) BuildGGUF(task *domain.Task, job *domain.TrainingJob, op
 	// tokenizer metadata before serving it. A GGUF with architecture +
 	// weights keys but zero tokenizer keys is an incomplete export that
 	// llama.cpp / HomeBred-LLM cannot load at inference time.
-	if err := ValidateGGUFCompleteness(filepath.Join(outputDir, name)); err != nil {
+	err = ValidateGGUFCompleteness(filepath.Join(outputDir, name))
+	if err != nil {
 		return nil, "", err
 	}
 
-	data, err := os.ReadFile(filepath.Join(outputDir, name))
+	data, err = os.ReadFile(filepath.Join(outputDir, name))
 	if err != nil {
 		return nil, "", fmt.Errorf("reading GGUF file: %w", err)
 	}
 
 	baseName := strings.TrimSuffix(name, filepath.Ext(name))
-	filename := fmt.Sprintf("%s-v%d-%s.gguf", SafeExportName(task.Name), job.Version, baseName)
+	filename = fmt.Sprintf("%s-v%d-%s.gguf", SafeExportName(task.Name), job.Version, baseName)
 
 	return data, filename, nil
 }
@@ -337,18 +384,18 @@ func (e *LocalExporter) GetGGUFProgress(sessionID string) *domain.GGUFProgressIn
 // The caller (HTTP handler) streams the file directly from disk — the
 // file is never loaded into memory. Returns empty path if the session
 // is not ready or does not exist.
-func (e *LocalExporter) GetGGUFResult(sessionID string) (string, string, error) {
+func (e *LocalExporter) GetGGUFResult(sessionID string) (path, filename string, err error) {
 	if e.Progress == nil {
-		return "", "", errors.New("async GGUF not available")
+		return "", "", ErrAsyncGGUFUnavailable
 	}
 
 	p := e.Progress.Get(sessionID)
 	if p == nil {
-		return "", "", errors.New("session not found")
+		return "", "", ErrGGUFSessionNotFound
 	}
 
 	if p.Status != GGUFStatusReady {
-		return "", "", fmt.Errorf("conversion not ready (status: %s)", p.Status)
+		return "", "", fmt.Errorf("%w (status: %s)", ErrGGUFNotReady, p.Status)
 	}
 
 	return p.filePath, p.Filename, nil
@@ -378,7 +425,7 @@ func (e *LocalExporter) CleanupGGUFSession(sessionID string) {
 
 // runGGUFAsync runs the GGUF conversion in the background, streaming progress
 // events from the Python subprocess to the progress store.
-func (e *LocalExporter) runGGUFAsync(sessionID string, task *domain.Task, job *domain.TrainingJob, opts domain.GGUFExportOptions, quantization string) {
+func (e *LocalExporter) runGGUFAsync(sessionID string, task *domain.Task, job *domain.TrainingJob, _ domain.GGUFExportOptions, quantization string) {
 	if e.Progress == nil {
 		return
 	}
@@ -391,114 +438,163 @@ func (e *LocalExporter) runGGUFAsync(sessionID string, task *domain.Task, job *d
 	}()
 
 	jobDir := filepath.Join(e.JobsDir, job.ID)
-	adapterDir := filepath.Join(jobDir, "adapter")
-	mergedDir := filepath.Join(jobDir, "model")
-
 	outputDir := filepath.Join(jobDir, "gguf")
-	if err := os.MkdirAll(outputDir, 0o755); err != nil {
-		e.Progress.Update(sessionID, func(p *GGUFProgress) {
-			p.Status = GGUFStatusError
-			p.Error = fmt.Sprintf("creating output dir: %v", err)
-		})
+
+	err := os.MkdirAll(outputDir, 0o755)
+	if err != nil {
+		e.ggufAsyncFail(sessionID, "creating output dir: %v", err)
 
 		return
 	}
 
 	outputName := SafeExportName(task.Name)
 	expectedName := fmt.Sprintf("%s-%s.gguf", outputName, quantization)
-
-	// ---- Cache check ----.
 	cachedPath := filepath.Join(outputDir, expectedName)
-	if FileExists(cachedPath) {
-		// Completeness gate: refuse to serve an incomplete cached GGUF.
-		err := ValidateGGUFCompleteness(cachedPath)
-		if err != nil {
-			// The cache entry is broken — remove it so a subsequent request
-			// triggers a fresh conversion instead of repeatedly failing.
-			_ = os.Remove(cachedPath)
 
-			e.Progress.Update(sessionID, func(p *GGUFProgress) {
-				p.Status = GGUFStatusError
-				p.Error = fmt.Sprintf("cached GGUF is incomplete: %v", err)
-			})
-
-			return
-		}
-
-		if fi, err := os.Stat(cachedPath); err == nil && fi.Size() > 0 {
-			absPath, _ := filepath.Abs(cachedPath)
-			baseName := strings.TrimSuffix(expectedName, ".gguf")
-			filename := fmt.Sprintf("%s-v%d-%s.gguf", outputName, job.Version, baseName)
-
-			e.Progress.Update(sessionID, func(p *GGUFProgress) {
-				p.Status = GGUFStatusReady
-				p.Percent = 100
-				p.Step = "Served from cache"
-				p.Filename = filename
-				p.Size = fi.Size()
-				p.filePath = absPath
-			})
-
-			return
-		}
+	if e.tryServeGGUFFromCache(sessionID, cachedPath, outputName, expectedName, job.Version) {
+		return
 	}
 
-	// ---- Build command ----.
-	args := []string{"-m", "trainer.gguf"}
-	args = append(args, "--job-dir", jobDir)
-	args = append(args, "--base-model", job.BaseModel.RepoID)
-	args = append(args, "--quantization", quantization)
-	args = append(args, "--output-name", outputName)
-	// Explicitly request GGUF v3 — required for qwen3 and other modern
-	// architectures. Passed explicitly so the export is always v3 even if
-	// the Python-side default changes.
-	args = append(args, "--gguf-version", "3")
+	cmd := exec.CommandContext(context.Background(), e.PythonBin, ggufConvertArgs(jobDir, outputName, job.BaseModel.RepoID, quantization, e.ModelCacheDir)...)
 
-	if e.ModelCacheDir != "" {
-		args = append(args, "--cache-dir", e.ModelCacheDir)
+	err = e.streamGGUFConversion(sessionID, cmd)
+	if err != nil {
+		return
 	}
 
-	if DirExists(adapterDir) {
+	e.finalizeGGUFAsync(sessionID, outputDir, expectedName, outputName, job.Version)
+}
+
+// ggufAsyncFail marks the session as failed with a formatted error message.
+func (e *LocalExporter) ggufAsyncFail(sessionID, format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+
+	e.Progress.Update(sessionID, func(p *GGUFProgress) {
+		p.Status = GGUFStatusError
+		p.Error = msg
+	})
+}
+
+// tryServeGGUFFromCache checks for an already-converted GGUF at cachedPath.
+// If a valid, complete cache entry exists it marks the session ready and
+// returns true (the caller should return immediately). If the cache entry
+// is present but incomplete, it removes it, marks the session failed, and
+// also returns true. It returns false when there is no usable cache and
+// conversion should proceed.
+func (e *LocalExporter) tryServeGGUFFromCache(sessionID, cachedPath, outputName, expectedName string, version int) bool {
+	if !FileExists(cachedPath) {
+		return false
+	}
+
+	// Completeness gate: refuse to serve an incomplete cached GGUF.
+	err := ValidateGGUFCompleteness(cachedPath)
+	if err != nil {
+		// The cache entry is broken — remove it so a subsequent request
+		// triggers a fresh conversion instead of repeatedly failing.
+		_ = os.Remove(cachedPath)
+
+		e.ggufAsyncFail(sessionID, "cached GGUF is incomplete: %v", err)
+
+		return true
+	}
+
+	fi, err := os.Stat(cachedPath)
+	if err != nil || fi.Size() == 0 {
+		return false
+	}
+
+	absPath, _ := filepath.Abs(cachedPath)
+	baseName := strings.TrimSuffix(expectedName, ".gguf")
+	filename := fmt.Sprintf("%s-v%d-%s.gguf", outputName, version, baseName)
+
+	e.Progress.Update(sessionID, func(p *GGUFProgress) {
+		p.Status = GGUFStatusReady
+		p.Percent = 100
+		p.Step = "Served from cache"
+		p.Filename = filename
+		p.Size = fi.Size()
+		p.filePath = absPath
+	})
+
+	return true
+}
+
+// ggufConvertArgs builds the trainer.gguf CLI argument list for job jobDir.
+// Explicitly requests GGUF v3 — required for qwen3 and other modern
+// architectures — so the export is always v3 even if the Python-side
+// default changes.
+func ggufConvertArgs(jobDir, outputName, baseModelRepoID, quantization, modelCacheDir string) []string {
+	adapterDir := filepath.Join(jobDir, "adapter")
+	mergedDir := filepath.Join(jobDir, "model")
+
+	args := []string{
+		"-m", "trainer.gguf",
+		"--job-dir", jobDir,
+		"--base-model", baseModelRepoID,
+		"--quantization", quantization,
+		"--output-name", outputName,
+		"--gguf-version", "3",
+	}
+
+	if modelCacheDir != "" {
+		args = append(args, "--cache-dir", modelCacheDir)
+	}
+
+	switch {
+	case DirExists(adapterDir):
 		args = append(args, "--adapter", adapterDir)
-	} else if DirExists(mergedDir) {
+	case DirExists(mergedDir):
 		args = append(args, "--model-dir", mergedDir)
-	} else {
+	default:
 		args = append(args, "--base-model-only")
 	}
 
-	cmd := exec.Command(e.PythonBin, args...)
+	return args
+}
 
+// streamGGUFConversion starts cmd, streams its stdout JSON progress events
+// into the session's progress store, and waits for it to finish. On any
+// failure it marks the session failed and returns a non-nil error; the
+// caller should treat that as "already handled" and return.
+func (e *LocalExporter) streamGGUFConversion(sessionID string, cmd *exec.Cmd) error {
 	// Capture stdout (JSON event lines) and stderr (error messages).
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		e.Progress.Update(sessionID, func(p *GGUFProgress) {
-			p.Status = GGUFStatusError
-			p.Error = fmt.Sprintf("pipe error: %v", err)
-		})
+		e.ggufAsyncFail(sessionID, "pipe error: %v", err)
 
-		return
+		return err
 	}
 
 	var stderrBuf bytes.Buffer
 
 	cmd.Stderr = &stderrBuf
 
-	if err := cmd.Start(); err != nil {
-		e.Progress.Update(sessionID, func(p *GGUFProgress) {
-			p.Status = GGUFStatusError
-			p.Error = fmt.Sprintf("failed to start converter: %v", err)
-		})
+	err = cmd.Start()
+	if err != nil {
+		e.ggufAsyncFail(sessionID, "failed to start converter: %v", err)
 
-		return
+		return err
 	}
 
-	// Stream stdout JSON events → progress store.
+	e.streamGGUFEvents(sessionID, stdout)
+
+	waitErr := cmd.Wait()
+	if waitErr != nil {
+		e.ggufAsyncFailWithStderr(sessionID, waitErr, stderrBuf.String())
+
+		return waitErr
+	}
+
+	return nil
+}
+
+// streamGGUFEvents scans newline-delimited JSON progress events from the
+// converter's stdout and applies each one to the session's progress.
+func (e *LocalExporter) streamGGUFEvents(sessionID string, stdout io.Reader) {
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 
 	for scanner.Scan() {
-		line := scanner.Bytes()
-
 		var event struct {
 			Type      string `json:"type"`
 			Message   string `json:"message"`
@@ -506,7 +602,7 @@ func (e *LocalExporter) runGGUFAsync(sessionID string, task *domain.Task, job *d
 			SizeBytes int64  `json:"size_bytes"`
 		}
 
-		err := json.Unmarshal(line, &event)
+		err := json.Unmarshal(scanner.Bytes(), &event)
 		if err != nil {
 			continue
 		}
@@ -515,68 +611,65 @@ func (e *LocalExporter) runGGUFAsync(sessionID string, task *domain.Task, job *d
 		// progress endpoint returns the actionable message before
 		// cmd.Wait() even finishes.
 		if event.Type == "error" {
-			e.Progress.Update(sessionID, func(p *GGUFProgress) {
-				p.Status = GGUFStatusError
-				p.Error = event.Message
-			})
+			e.ggufAsyncFail(sessionID, "%s", event.Message)
 
 			continue
 		}
 
-		pct, step := EventPercent(event.Type)
+		e.applyGGUFEvent(sessionID, event.Type, event.Message, event.File)
+	}
+}
 
-		detail := event.Message
-		if detail == "" && event.File != "" {
-			detail = event.File
-		}
+// applyGGUFEvent merges one non-error progress event into the session.
+func (e *LocalExporter) applyGGUFEvent(sessionID, eventType, message, file string) {
+	pct, step := EventPercent(eventType)
 
-		e.Progress.Update(sessionID, func(p *GGUFProgress) {
-			if pct >= 0 {
-				p.Percent = pct
-			}
-
-			if step != "" {
-				p.Step = step
-			}
-
-			if detail != "" {
-				p.Detail = detail
-			}
-		})
+	detail := message
+	if detail == "" && file != "" {
+		detail = file
 	}
 
-	// Wait for process to finish.
-	waitErr := cmd.Wait()
-	if waitErr != nil {
-		stderrText := strings.TrimSpace(stderrBuf.String())
+	e.Progress.Update(sessionID, func(p *GGUFProgress) {
+		if pct >= 0 {
+			p.Percent = pct
+		}
 
-		e.Progress.Update(sessionID, func(p *GGUFProgress) {
-			p.Status = GGUFStatusError
+		if step != "" {
+			p.Step = step
+		}
 
-			if stderrText != "" {
-				// Include the last ~500 chars of stderr for actionable diagnostics.
-				if len(stderrText) > 500 {
-					stderrText = "..." + stderrText[len(stderrText)-500:]
-				}
+		if detail != "" {
+			p.Detail = detail
+		}
+	})
+}
 
-				p.Error = fmt.Sprintf("conversion failed: %v\n%s", waitErr, stderrText)
-			} else {
-				p.Error = fmt.Sprintf("conversion failed: %v", waitErr)
-			}
-		})
+// ggufAsyncFailWithStderr marks the session failed with the subprocess wait
+// error, including up to the last ~500 chars of stderr when available.
+func (e *LocalExporter) ggufAsyncFailWithStderr(sessionID string, waitErr error, stderr string) {
+	stderrText := strings.TrimSpace(stderr)
+	if stderrText == "" {
+		e.ggufAsyncFail(sessionID, "conversion failed: %v", waitErr)
 
 		return
 	}
 
-	// Read the produced GGUF file.
+	// Include the last ~500 chars of stderr for actionable diagnostics.
+	if len(stderrText) > 500 {
+		stderrText = "..." + stderrText[len(stderrText)-500:]
+	}
+
+	e.ggufAsyncFail(sessionID, "conversion failed: %v\n%s", waitErr, stderrText)
+}
+
+// finalizeGGUFAsync locates the just-produced GGUF file, verifies it is
+// complete, and marks the session ready.
+func (e *LocalExporter) finalizeGGUFAsync(sessionID, outputDir, expectedName, outputName string, version int) {
 	name := expectedName
 	if !FileExists(filepath.Join(outputDir, name)) {
 		n, err := PreferredGGUF(outputDir)
 		if err != nil {
-			e.Progress.Update(sessionID, func(p *GGUFProgress) {
-				p.Status = GGUFStatusError
-				p.Error = fmt.Sprintf("finding output GGUF: %v", err)
-			})
+			e.ggufAsyncFail(sessionID, "finding output GGUF: %v", err)
 
 			return
 		}
@@ -590,28 +683,23 @@ func (e *LocalExporter) runGGUFAsync(sessionID string, task *domain.Task, job *d
 	// tokenizer metadata before marking it ready. A GGUF with architecture +
 	// weights keys but zero tokenizer keys is an incomplete export that
 	// llama.cpp / HomeBred-LLM cannot load at inference time.
-	if err := ValidateGGUFCompleteness(ggufPath); err != nil {
-		e.Progress.Update(sessionID, func(p *GGUFProgress) {
-			p.Status = GGUFStatusError
-			p.Error = fmt.Sprintf("GGUF export is incomplete: %v", err)
-		})
+	err := ValidateGGUFCompleteness(ggufPath)
+	if err != nil {
+		e.ggufAsyncFail(sessionID, "GGUF export is incomplete: %v", err)
 
 		return
 	}
 
 	fi, err := os.Stat(ggufPath)
 	if err != nil {
-		e.Progress.Update(sessionID, func(p *GGUFProgress) {
-			p.Status = GGUFStatusError
-			p.Error = fmt.Sprintf("reading GGUF file: %v", err)
-		})
+		e.ggufAsyncFail(sessionID, "reading GGUF file: %v", err)
 
 		return
 	}
 
 	absPath, _ := filepath.Abs(ggufPath)
 	baseName := strings.TrimSuffix(name, filepath.Ext(name))
-	filename := fmt.Sprintf("%s-v%d-%s.gguf", outputName, job.Version, baseName)
+	filename := fmt.Sprintf("%s-v%d-%s.gguf", outputName, version, baseName)
 
 	e.Progress.Update(sessionID, func(p *GGUFProgress) {
 		p.Status = GGUFStatusReady
@@ -627,7 +715,7 @@ func (e *LocalExporter) runGGUFAsync(sessionID string, task *domain.Task, job *d
 // given timeout. Returns (unlockFunc, acquired, error). If `acquired` is
 // false, some other process holds the lock and the caller should wait for
 // that process to finish (the returned unlockFunc is a no-op).
-func acquireGGUFLock(path string, timeout time.Duration) (func(), bool, error) {
+func acquireGGUFLock(path string, timeout time.Duration) (unlock func(), acquired bool, err error) {
 	// On Windows, file locking is best-effort (no flock). We simulate a
 	// simple lock via O_EXCL create + stale-check.
 	if runtime.GOOS == "windows" {
@@ -656,7 +744,7 @@ func acquireGGUFLock(path string, timeout time.Duration) (func(), bool, error) {
 			}
 
 			if time.Now().After(deadline) {
-				return func() {}, false, errors.New("timed out waiting for GGUF conversion lock (another conversion may be running)")
+				return func() {}, false, fmt.Errorf("%w (another conversion may be running)", ErrGGUFLockTimeout)
 			}
 
 			time.Sleep(500 * time.Millisecond)
@@ -670,7 +758,7 @@ func acquireGGUFLock(path string, timeout time.Duration) (func(), bool, error) {
 
 // acquireWindowsLock implements a best-effort lock via exclusive-create with
 // staleness detection.
-func acquireWindowsLock(path string, timeout time.Duration) (func(), bool, error) {
+func acquireWindowsLock(path string, timeout time.Duration) (unlock func(), acquired bool, err error) {
 	deadline := time.Now().Add(timeout)
 
 	for {
@@ -690,7 +778,7 @@ func acquireWindowsLock(path string, timeout time.Duration) (func(), bool, error
 			}
 
 			if time.Now().After(deadline) {
-				return func() {}, false, errors.New("timed out waiting for GGUF conversion lock")
+				return func() {}, false, ErrGGUFLockTimeout
 			}
 
 			time.Sleep(500 * time.Millisecond)
@@ -729,7 +817,7 @@ func runWithTimeout(cmd *exec.Cmd, timeout time.Duration) ([]byte, error) {
 
 		<-done // drain.
 
-		return buf.Bytes(), fmt.Errorf("GGUF conversion timed out after %v", timeout)
+		return buf.Bytes(), fmt.Errorf("%w after %v", ErrGGUFConversionTimeout, timeout)
 	}
 }
 
@@ -740,7 +828,8 @@ func runWithTimeout(cmd *exec.Cmd, timeout time.Duration) ([]byte, error) {
 func PreferredGGUF(dir string) (string, error) {
 	manifestPath := filepath.Join(dir, "gguf-manifest.json")
 
-	if data, err := os.ReadFile(manifestPath); err == nil {
+	data, err := os.ReadFile(manifestPath)
+	if err == nil {
 		var m struct {
 			File string `json:"file"`
 		}
@@ -775,9 +864,9 @@ func PreferredGGUF(dir string) (string, error) {
 	case 1:
 		return gguFiles[0], nil
 	case 0:
-		return "", fmt.Errorf("no *.gguf file found in %s", dir)
+		return "", fmt.Errorf("%w in %s", ErrNoGGUFFile, dir)
 	default:
-		return "", fmt.Errorf("multiple *.gguf files in %s; cannot pick one", dir)
+		return "", fmt.Errorf("%w in %s", ErrAmbiguousGGUFFile, dir)
 	}
 }
 

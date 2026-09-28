@@ -176,6 +176,57 @@ func TestTransfer_Local_Upload(t *testing.T) {
 	}
 }
 
+// TestTransfer_Local_Upload_PreservesNestedDirectories guards against a
+// regression in copyTree's path-sanitizer: it used to replace every OS path
+// separator in the validated relative path with "_", which flattened a
+// multi-level source tree into a single mangled filename directly under the
+// store root instead of preserving the directory structure (a single level
+// of nesting is enough to trigger it, and it compounds with depth).
+func TestTransfer_Local_Upload_PreservesNestedDirectories(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	store := localStore(root)
+
+	src := t.TempDir()
+
+	err := os.MkdirAll(filepath.Join(src, "checkpoint-500"), 0o755)
+	if err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	err = os.WriteFile(filepath.Join(src, "checkpoint-500", "adapter_model.bin"), []byte("weights"), 0o644)
+	if err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	tr := modelstore.New("")
+
+	_, err = tr.Upload(store, src, "my-model", "")
+	if err != nil {
+		t.Fatalf("Upload: unexpected error %v", err)
+	}
+
+	wantPath := filepath.Join(root, "my-model", "checkpoint-500", "adapter_model.bin")
+
+	info, err := os.Stat(wantPath)
+	if err != nil {
+		t.Fatalf("expected nested file to exist at %s: %v", wantPath, err)
+	}
+
+	if info.IsDir() {
+		t.Errorf("expected %s to be a file, got a directory", wantPath)
+	}
+
+	// The old buggy sanitizer wrote this flattened sibling instead.
+	flattened := filepath.Join(root, "my-model_checkpoint-500_adapter_model.bin")
+
+	_, err = os.Stat(flattened)
+	if err == nil {
+		t.Errorf("nested path was flattened into %s instead of being preserved", flattened)
+	}
+}
+
 func TestTransfer_Local_Upload_NoPath(t *testing.T) {
 	t.Parallel()
 

@@ -1,8 +1,11 @@
 package http
 
 import (
+	"encoding/base64"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"distillery/internal/usecase"
 )
@@ -315,4 +318,108 @@ func (h *DatasetHandler) PreferenceStats(w http.ResponseWriter, _ *http.Request,
 	}
 
 	writeJSON(w, http.StatusOK, stats)
+}
+
+// AddVisionExample POST /api/v1/tasks/{taskID}/examples/vision adds one
+// image+prompt(+answer) example. The image is base64-encoded in the JSON
+// body (optionally prefixed with a data URL header, e.g.
+// "data:image/png;base64,...", which is stripped).
+func (h *DatasetHandler) AddVisionExample(w http.ResponseWriter, r *http.Request, taskID string) {
+	var req addVisionExampleRequest
+
+	err := decodeJSON(r, &req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	imgData, err := decodeImageBase64(req.ImageBase64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "image_base64 is not valid base64 image data")
+		return
+	}
+
+	stats, err := h.uc.AddVisionExample(taskID, imgData, req.Prompt, req.Answer)
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, stats)
+}
+
+// ImportVisionZIP POST /api/v1/tasks/{taskID}/examples/import-vision-zip
+// bulk-loads a ZIP archive of page images plus a data.jsonl manifest (see
+// docs/vision-language-document-ai.md for the manifest shape).
+func (h *DatasetHandler) ImportVisionZIP(w http.ResponseWriter, r *http.Request, taskID string) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 200<<20)) // 200MB cap.
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read request body")
+		return
+	}
+
+	stats, err := h.uc.ImportVisionZIP(taskID, body)
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, stats)
+}
+
+// ImportVisionPDF POST
+// /api/v1/tasks/{taskID}/examples/import-vision-pdf?prompt=...&dpi=150
+// rasterizes an uploaded PDF (raw body) into one image example per page.
+func (h *DatasetHandler) ImportVisionPDF(w http.ResponseWriter, r *http.Request, taskID string) {
+	body, err := io.ReadAll(io.LimitReader(r.Body, 50<<20)) // 50MB cap.
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read request body")
+		return
+	}
+
+	prompt := r.URL.Query().Get("prompt")
+	dpi := 150
+
+	v := r.URL.Query().Get("dpi")
+	if v != "" {
+		parsed, convErr := strconv.Atoi(v)
+		if convErr == nil && parsed > 0 {
+			dpi = parsed
+		}
+	}
+
+	stats, err := h.uc.ImportPDF(taskID, body, prompt, dpi)
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, stats)
+}
+
+// GetBlob GET /api/v1/tasks/{taskID}/blobs/{key} serves a previously stored
+// vision_lm image (or rasterized PDF page) so the dataset gallery and
+// test-tab preview can render it directly in an <img> tag.
+func (h *DatasetHandler) GetBlob(w http.ResponseWriter, _ *http.Request, taskID, key string) {
+	data, contentType, err := h.uc.GetBlob(taskID, key)
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
+// decodeImageBase64 decodes a base64 image payload, stripping a leading
+// data-URL header ("data:image/png;base64,...") when present.
+func decodeImageBase64(s string) ([]byte, error) {
+	idx := strings.Index(s, ",")
+	if idx >= 0 && strings.HasPrefix(s, "data:") {
+		s = s[idx+1:]
+	}
+
+	return base64.StdEncoding.DecodeString(strings.TrimSpace(s))
 }

@@ -21,6 +21,7 @@ quantized LoRA on your own machine.
 - **Real local QLoRA backend** - Go/Python worker contract drives real GPU fine-tuning (trainer/run.py) — implemented, not a stub.
 - **Production GGUF export** - sync or async; merge LoRA, convert, quantize, cached per job+quantization.
 - **Embedding & reranker models** - fine-tune sentence-embedding bi-encoders and cross-encoder rerankers on pairs/triplets/graded relevance; serve via `/embed` and `/rerank`, evaluate nDCG@10/MRR/recall base-vs-tuned, and export corpus vectors for any vector DB. See [docs/embeddings-rerankers.md](docs/embeddings-rerankers.md).
+- **Vision-language / document AI** - fine-tune Qwen2-VL on image+prompt→answer pairs for receipt/invoice/form field extraction; import a ZIP of images, a PDF (auto-rasterized page-by-page), or add examples one at a time; serve via multipart `/predict`; evaluate field-level exact-match/F1, JSON validity rate, ANLS, and document accuracy against a zero-shot baseline; images are stored locally with a configurable retention window. See [docs/vision-language-document-ai.md](docs/vision-language-document-ai.md).
 - **Simulated demo backend** - `simulation` adapter (default) fakes training/inference so the whole flow works with no GPU. Clearly labeled in the code and UI. Switch to `local` for real training.
 
 ## Real fine-tuning backend
@@ -276,11 +277,15 @@ POST   /api/v1/tasks/{taskID}/training
 GET    /api/v1/training/{jobID}
 POST   /api/v1/tasks/{taskID}/deploy                  (deploy latest, returns one-time API key)
 POST   /api/v1/tasks/{taskID}/training/{jobID}/deploy (deploy a specific version — rollback)
-POST   /api/v1/inference/{deploymentID}/predict       (requires API key)
+POST   /api/v1/inference/{deploymentID}/predict       (requires API key; vision_lm uses multipart: file+prompt)
 POST   /api/v1/inference/{deploymentID}/batch         (CSV/text in, CSV predictions out; requires API key)
 POST   /api/v1/inference/{deploymentID}/embed         (embedding model; requires API key)
 POST   /api/v1/inference/{deploymentID}/rerank        (reranker model; requires API key)
 POST   /api/v1/inference/{deploymentID}/embed-corpus  (embed a whole corpus, CSV out; requires API key)
+POST   /api/v1/tasks/{taskID}/examples/vision          (add one image+prompt(+answer) example)
+POST   /api/v1/tasks/{taskID}/examples/import-vision-zip (bulk import: ZIP of images + data.jsonl manifest)
+POST   /api/v1/tasks/{taskID}/examples/import-vision-pdf (rasterize a PDF into one example per page)
+GET    /api/v1/tasks/{taskID}/blobs/{key}              (fetch a stored image/rasterized page)
 GET    /api/v1/tasks/{taskID}/export
 POST   /api/v1/tasks/{taskID}/feedback
 POST   /api/v1/tasks/{taskID}/feedback/fold
@@ -390,3 +395,9 @@ it doesn't touch usecases, handlers, or the UI.
   task-management API itself (`/api/v1/tasks/...`) has no auth — add a
   middleware in `internal/delivery/http/router.go` before exposing the
   management API beyond localhost/trusted networks.
+- The vision-language trainer (`trainer/tasks/vision.py`) implements one
+  model family (Qwen2-VL) end-to-end; PaliGemma/Florence-2/LayoutLMv3/Donut
+  are catalog entries only. The blob store is local-disk only (no S3 backend
+  yet, though it's a drop-in behind `domain.BlobStore`), and there's no
+  batch (ZIP-in/JSONL-out) vision inference endpoint — only one image per
+  `/predict` call. See [docs/vision-language-document-ai.md](docs/vision-language-document-ai.md#scope--known-limitations).
