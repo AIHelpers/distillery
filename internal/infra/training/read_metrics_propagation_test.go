@@ -13,6 +13,8 @@ import (
 // contract: the worker writes a fractional epoch and flat classifier keys;
 // the adapter must round the epoch and propagate every classifier field.
 func TestReadMetricsClassifierPropagation(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 
 	metrics := `{` +
@@ -26,7 +28,8 @@ func TestReadMetricsClassifierPropagation(t *testing.T) {
 		`"label_map":{"a":0,"b":1},` +
 		`"threshold_sweep":[{"threshold":0.5,"macro_f1":0.8,"coverage":0.9}]}`
 
-	if err := os.WriteFile(filepath.Join(dir, "metrics.json"), []byte(metrics), 0o600); err != nil {
+	err := os.WriteFile(filepath.Join(dir, "metrics.json"), []byte(metrics), 0o600)
+	if err != nil {
 		t.Fatalf("write metrics: %v", err)
 	}
 

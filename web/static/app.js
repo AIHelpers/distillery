@@ -117,6 +117,7 @@ function showNewTaskModal() {
           <option value="seq_classifier">Sequence Classifier (Sentiment / Intent)</option>
           <option value="embedding">Embedding (Search / Similarity)</option>
           <option value="reranker">Reranker (Cross-Encoder)</option>
+          <option value="vision_lm">Vision-Language (Document AI / Image Extraction)</option>
         </select>
         <div class="modal-actions">
           <button class="btn ghost" id="nt-cancel">Cancel</button>
@@ -254,6 +255,7 @@ async function renderDatasetPanel(task) {
   }
 
   panel.innerHTML = `
+    ${task.kind === "vision_lm" ? renderVisionAddCards() : `
     <div class="card">
       <h3>Add example input/output pairs</h3>
       <p class="hint">One pair per line, input and output separated by " -&gt; ". Example:<br/>
@@ -314,6 +316,7 @@ Can I change my email on file? -> account"></textarea>
       <div class="hint" id="jsonl-file-status"></div>
     </div>
     `}
+    `}
 
     ${task.kind === "causal_lm" ? `
     <div class="card">
@@ -356,6 +359,7 @@ Can I change my email on file? -> account"></textarea>
     </div>
     ` : ""}
 
+    ${task.kind === "vision_lm" ? "" : `
     <div class="card">
       <h3>Bootstrap synthetic examples</h3>
       <p class="hint">Generate additional training pairs from your existing examples to help
@@ -368,6 +372,7 @@ Can I change my email on file? -> account"></textarea>
         <button class="btn" id="synth-btn">Generate synthetic examples</button>
       </div>
     </div>
+    `}
 
     <div class="card">
       <h3>Dataset health</h3>
@@ -376,62 +381,71 @@ Can I change my email on file? -> account"></textarea>
 
     <div class="card">
       <h3>Examples (${examples.length})</h3>
-      ${renderExamplesTable(examples)}
+      ${task.kind === "vision_lm" ? renderVisionGallery(examples, task.id) : renderExamplesTable(examples)}
     </div>
   `;
 
-  document.getElementById("add-examples-btn").onclick = async () => {
-    const raw = document.getElementById("ex-textarea").value;
-    const pairs = raw
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => {
-        const idx = line.indexOf("->");
-        if (idx === -1) return null;
-        return { input: line.slice(0, idx).trim(), output: line.slice(idx + 2).trim() };
-      })
-      .filter(Boolean);
-    if (pairs.length === 0) {
-      toast('Use the format "input -> output", one pair per line.', true);
-      return;
-    }
-    try {
-      await api("POST", `/tasks/${task.id}/examples`, { pairs });
-      toast(`Added ${pairs.length} example(s).`);
-      renderDatasetPanel(task);
-    } catch (e) {
-      toast(e.message, true);
-    }
-  };
+  const addExamplesBtn = document.getElementById("add-examples-btn");
+  if (addExamplesBtn) {
+    addExamplesBtn.onclick = async () => {
+      const raw = document.getElementById("ex-textarea").value;
+      const pairs = raw
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => {
+          const idx = line.indexOf("->");
+          if (idx === -1) return null;
+          return { input: line.slice(0, idx).trim(), output: line.slice(idx + 2).trim() };
+        })
+        .filter(Boolean);
+      if (pairs.length === 0) {
+        toast('Use the format "input -> output", one pair per line.', true);
+        return;
+      }
+      try {
+        await api("POST", `/tasks/${task.id}/examples`, { pairs });
+        toast(`Added ${pairs.length} example(s).`);
+        renderDatasetPanel(task);
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
+  }
 
-  document.getElementById("synth-btn").onclick = async () => {
-    const count = parseInt(document.getElementById("synth-count").value, 10) || 20;
-    try {
-      await api("POST", `/tasks/${task.id}/examples/synthetic`, { count });
-      toast(`Generated ${count} synthetic example(s).`);
-      renderDatasetPanel(task);
-    } catch (e) {
-      toast(e.message, true);
-    }
-  };
+  const synthBtn = document.getElementById("synth-btn");
+  if (synthBtn) {
+    synthBtn.onclick = async () => {
+      const count = parseInt(document.getElementById("synth-count").value, 10) || 20;
+      try {
+        await api("POST", `/tasks/${task.id}/examples/synthetic`, { count });
+        toast(`Generated ${count} synthetic example(s).`);
+        renderDatasetPanel(task);
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
+  }
 
-  document.getElementById("csv-file-input").onchange = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const statusEl = document.getElementById("csv-file-status");
-    statusEl.textContent = "Importing…";
-    try {
-      const text = await file.text();
-      const res = await apiRawOrThrow("POST", `/tasks/${task.id}/examples/import`, text, { "Content-Type": "text/csv" });
-      const stats = await res.json();
-      toast(`Imported CSV — dataset now has ${stats.total} example(s).`);
-      renderDatasetPanel(task);
-    } catch (err) {
-      statusEl.textContent = "";
-      toast(err.message, true);
-    }
-  };
+  const csvInput = document.getElementById("csv-file-input");
+  if (csvInput) {
+    csvInput.onchange = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const statusEl = document.getElementById("csv-file-status");
+      statusEl.textContent = "Importing…";
+      try {
+        const text = await file.text();
+        const res = await apiRawOrThrow("POST", `/tasks/${task.id}/examples/import`, text, { "Content-Type": "text/csv" });
+        const stats = await res.json();
+        toast(`Imported CSV — dataset now has ${stats.total} example(s).`);
+        renderDatasetPanel(task);
+      } catch (err) {
+        statusEl.textContent = "";
+        toast(err.message, true);
+      }
+    };
+  }
 
   const jsonlInput = document.getElementById("jsonl-file-input");
   if (jsonlInput) {
@@ -596,6 +610,151 @@ Can I change my email on file? -> account"></textarea>
       }
     };
   });
+
+  // --- Vision-language (document AI) dataset controls ---
+  const addVisionBtn = document.getElementById("add-vision-btn");
+  if (addVisionBtn) {
+    addVisionBtn.onclick = async () => {
+      const fileInput = document.getElementById("vision-image-input");
+      const file = fileInput.files[0];
+      const prompt = document.getElementById("vision-prompt").value.trim();
+      const answer = document.getElementById("vision-answer").value.trim();
+      if (!file) {
+        toast("Choose an image to add.", true);
+        return;
+      }
+      if (!prompt) {
+        toast("A prompt is required.", true);
+        return;
+      }
+      try {
+        const imageBase64 = await fileToDataURL(file);
+        await api("POST", `/tasks/${task.id}/examples/vision`, { image_base64: imageBase64, prompt, answer });
+        toast("Example added.");
+        fileInput.value = "";
+        document.getElementById("vision-prompt").value = "";
+        document.getElementById("vision-answer").value = "";
+        renderDatasetPanel(task);
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
+  }
+
+  const visionZipInput = document.getElementById("vision-zip-file-input");
+  if (visionZipInput) {
+    visionZipInput.onchange = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const statusEl = document.getElementById("vision-zip-status");
+      statusEl.textContent = "Importing ZIP — this can take a moment for large archives…";
+      try {
+        const buf = await file.arrayBuffer();
+        const res = await apiRawOrThrow("POST", `/tasks/${task.id}/examples/import-vision-zip`, buf, { "Content-Type": "application/zip" });
+        const stats = await res.json();
+        statusEl.textContent = "";
+        toast(`Imported ZIP — dataset now has ${stats.total} example(s).`);
+        renderDatasetPanel(task);
+      } catch (err) {
+        statusEl.textContent = "";
+        toast(err.message, true);
+      }
+    };
+  }
+
+  const visionPdfInput = document.getElementById("vision-pdf-file-input");
+  if (visionPdfInput) {
+    visionPdfInput.onchange = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const prompt = document.getElementById("vision-pdf-prompt").value.trim();
+      const dpi = parseInt(document.getElementById("vision-pdf-dpi").value, 10) || 150;
+      const statusEl = document.getElementById("vision-pdf-status");
+      statusEl.textContent = "Rasterizing PDF pages…";
+      try {
+        const buf = await file.arrayBuffer();
+        const url = `/tasks/${task.id}/examples/import-vision-pdf?dpi=${dpi}` + (prompt ? `&prompt=${encodeURIComponent(prompt)}` : "");
+        const res = await apiRawOrThrow("POST", url, buf, { "Content-Type": "application/pdf" });
+        const stats = await res.json();
+        statusEl.textContent = "";
+        toast(`Imported PDF pages — dataset now has ${stats.total} example(s).`);
+        renderDatasetPanel(task);
+      } catch (err) {
+        statusEl.textContent = "";
+        toast(err.message, true);
+      }
+    };
+  }
+}
+
+// fileToDataURL reads a File/Blob into a base64 data URL
+// ("data:image/png;base64,...") for the vision example-add endpoint, which
+// accepts a data-URL-prefixed or bare base64 string.
+function fileToDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("Failed to read the image file."));
+    reader.readAsDataURL(file);
+  });
+}
+
+// renderVisionAddCards renders the vision_lm dataset tab's add/import cards:
+// a single image+prompt+answer form, a ZIP-of-images bulk import, and a
+// PDF-to-page-images import — replacing the generic text pair/CSV/JSONL
+// cards, which don't apply to an image dataset.
+function renderVisionAddCards() {
+  return `
+    <div class="card">
+      <h3>Add a document/image example</h3>
+      <p class="hint">Upload one page image, the instruction/question to ask about it, and
+      (optionally) the expected answer — free text, or JSON text when your task uses a JSON
+      Schema (see the schema card below, if this task's type is Extraction).</p>
+      <div class="field" style="margin-bottom:10px;">
+        <label>Image (PNG / JPEG)</label>
+        <input type="file" id="vision-image-input" accept=".png,.jpg,.jpeg,.gif,image/png,image/jpeg,image/gif" />
+      </div>
+      <div class="field" style="margin-bottom:10px;">
+        <label>Prompt</label>
+        <textarea id="vision-prompt" rows="2" placeholder="Extract vendor, total and date as JSON."></textarea>
+      </div>
+      <div class="field" style="margin-bottom:10px;">
+        <label>Answer (leave blank to add unanswered, for later human correction)</label>
+        <textarea id="vision-answer" rows="2" placeholder='{"vendor":"Acme","total":4200.00,"date":"2026-05-03"}'></textarea>
+      </div>
+      <div class="modal-actions" style="justify-content:flex-start; margin-top:4px;">
+        <button class="btn primary" id="add-vision-btn">Add example</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Import a dataset ZIP</h3>
+      <p class="hint">Upload a ZIP archive containing page images plus a <span class="source-tag">data.jsonl</span>
+      manifest (one line per example: <code>{"image":"images/inv_0042.png","prompt":"...","answer":"..."}</code>,
+      image paths relative to the archive root).</p>
+      <input type="file" id="vision-zip-file-input" accept=".zip,application/zip" />
+      <div class="hint" id="vision-zip-status"></div>
+    </div>
+
+    <div class="card">
+      <h3>Import a PDF (one example per page)</h3>
+      <p class="hint">Upload a PDF — each page is rasterized to an image and added as a separate
+      example sharing the same prompt, so you can then correct answers page-by-page below.</p>
+      <div class="inline-form" style="align-items:center;">
+        <div class="field" style="flex:1;">
+          <label>Prompt (applied to every page)</label>
+          <input type="text" id="vision-pdf-prompt" placeholder="Extract vendor, total and date as JSON." />
+        </div>
+        <div class="field" style="width:110px;">
+          <label>DPI</label>
+          <input type="number" id="vision-pdf-dpi" value="150" min="50" max="600" />
+        </div>
+      </div>
+      <label>PDF file</label>
+      <input type="file" id="vision-pdf-file-input" accept=".pdf,application/pdf" />
+      <div class="hint" id="vision-pdf-status"></div>
+    </div>
+  `;
 }
 
 function showEditExampleModal(task, id, input, output) {
@@ -715,6 +874,42 @@ function renderExamplesTable(examples) {
     .join("");
   return `<table><thead><tr><th>Input</th><th>Output</th><th>Source</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>
   ${examples.length > 100 ? `<p class="hint">Showing latest 100 of ${examples.length}.</p>` : ""}`;
+}
+
+// renderVisionGallery renders a vision_lm task's examples as an image
+// gallery (thumbnail + prompt + answer) instead of the generic input/output
+// table, since a vision_lm example's data lives in its Payload
+// ({image, prompt, answer}) rather than the legacy Input/Output fields.
+// Editing isn't offered here (the generic PUT /examples/{id} endpoint only
+// updates Input/Output, which vision examples don't use) — only delete.
+function renderVisionGallery(examples, taskId) {
+  if (examples.length === 0) return '<p class="muted">No examples yet — add one above.</p>';
+  const cards = examples
+    .slice()
+    .reverse()
+    .slice(0, 60)
+    .map((e) => {
+      const payload = e.payload || {};
+      const cls = [e.flagged ? "flagged" : "", e.duplicate ? "duplicate" : ""].join(" ").trim();
+      const imgSrc = payload.image ? `${API}/tasks/${taskId}/blobs/${encodeURIComponent(payload.image)}` : "";
+      const statusLabel = e.flagged ? "flagged: " + escapeHtml(e.flag_note || "") : e.duplicate ? "duplicate" : !payload.answer ? "needs answer" : "ok";
+      return `
+      <div class="job-row ${cls}" style="align-items:flex-start;">
+        ${imgSrc ? `<img src="${imgSrc}" alt="page image" style="width:96px;height:96px;object-fit:cover;border-radius:4px;border:1px solid var(--charcoal-3);flex-shrink:0;" />` : ""}
+        <div style="flex:1;min-width:0;">
+          <div class="hint">Prompt</div>
+          <div style="margin-bottom:6px;">${escapeHtml(truncate(payload.prompt || "", 160))}</div>
+          <div class="hint">Answer</div>
+          <div style="margin-bottom:6px;">${payload.answer ? escapeHtml(truncate(payload.answer, 160)) : '<span class="muted">(none yet)</span>'}</div>
+          <span class="source-tag">${escapeHtml(e.source)}</span>
+          <span class="source-tag">${statusLabel}</span>
+        </div>
+        <button class="btn small danger" data-delete-id="${e.id}">Delete</button>
+      </div>`;
+    })
+    .join("");
+  return `<div style="display:flex;flex-direction:column;gap:10px;">${cards}</div>
+  ${examples.length > 60 ? `<p class="hint" style="margin-top:10px;">Showing latest 60 of ${examples.length}.</p>` : ""}`;
 }
 
 // --- Training panel ---
@@ -928,6 +1123,13 @@ function renderJobRow(j, allJobs) {
       }
     } else if (j.kind === "token_classifier" && j.metrics.entity_f1 !== undefined) {
       metricsHint = `Entity F1: <strong>${(j.metrics.entity_f1 * 100).toFixed(1)}%</strong> (P: ${(j.metrics.entity_precision * 100).toFixed(1)}% · R: ${(j.metrics.entity_recall * 100).toFixed(1)}%) · ${j.metrics.train_examples} examples`;
+    } else if (j.kind === "vision_lm" && j.metrics.macro_field_f1 !== undefined) {
+      metricsHint = `Field F1: <strong>${(j.metrics.macro_field_f1 * 100).toFixed(1)}%</strong>`;
+      if (j.metrics.baseline_field_f1 !== undefined && j.metrics.baseline_field_f1 !== null) {
+        const delta = j.metrics.delta_field_f1 || 0;
+        metricsHint += ` (${delta >= 0 ? "+" : ""}${(delta * 100).toFixed(1)}pt vs. zero-shot baseline)`;
+      }
+      metricsHint += ` · JSON valid: ${(j.metrics.json_valid_rate * 100).toFixed(0)}% · ANLS: ${j.metrics.anls.toFixed(2)} · doc acc: ${(j.metrics.document_accuracy * 100).toFixed(0)}% · ${j.metrics.train_examples} examples`;
     } else {
       metricsHint = `loss ${j.metrics.final_loss.toFixed(2)} · acc ${(j.metrics.eval_accuracy * 100).toFixed(0)}% · ${j.metrics.train_examples} examples`;
       if (j.metrics.json_validity_rate !== undefined && j.metrics.json_validity_rate !== null) {
@@ -958,6 +1160,10 @@ function renderJobRow(j, allJobs) {
   if (!isRunning) {
     actions.push(`<button class="btn small danger" data-delete-job="${j.id}" data-delete-version="${j.version}">Delete</button>`);
   }
+  const fieldTable =
+    !isRunning && j.kind === "vision_lm" && j.metrics && j.metrics.field_metrics && Object.keys(j.metrics.field_metrics).length > 0
+      ? renderFieldMetricsTable(j.metrics.field_metrics)
+      : "";
   return `
     <div class="job-row">
       <div style="flex:1">
@@ -967,11 +1173,28 @@ function renderJobRow(j, allJobs) {
           <div class="gauge-wrap">
             <div class="gauge"><div class="gauge-fill" style="width:${j.progress}%"></div></div>
             <div class="gauge-pct">${j.progress}%</div>
-          </div>` : `<div>${metrics}</div>`}
+          </div>` : `<div>${metrics}</div>${fieldTable}`}
       </div>
       ${actions.join(" ")}
     </div>
   `;
+}
+
+// renderFieldMetricsTable renders per-field exact-match/F1 for a vision_lm
+// run's document-extraction fields, so the "which fields need more data"
+// question the plan calls out doesn't require exporting metrics.json by hand.
+function renderFieldMetricsTable(fieldMetrics) {
+  const rows = Object.entries(fieldMetrics)
+    .map(
+      ([field, m]) =>
+        `<tr><td>${escapeHtml(field)}</td><td>${(m.exact_match * 100).toFixed(0)}%</td><td>${(m.f1 * 100).toFixed(0)}%</td><td>${m.support}</td></tr>`
+    )
+    .join("");
+  return `
+    <table style="margin-top:8px;">
+      <thead><tr><th>Field</th><th>Exact match</th><th>F1</th><th>Support</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
 }
 
 // --- Deploy & Test panel ---
@@ -1040,6 +1263,28 @@ async function renderDeployPanel(task) {
       ${
         !deployment
           ? '<p class="muted">Deploy a model above to test it here.</p>'
+          : task.kind === "vision_lm"
+          ? `
+        ${
+          !knownKey
+            ? `<label>API key</label><input type="text" id="predict-key" placeholder="sk_…" />`
+            : ""
+        }
+        <div class="field" style="margin-bottom:10px;">
+          <label>Image (drag &amp; drop or choose a file)</label>
+          <div id="vision-drop-zone" style="border:1px dashed var(--charcoal-3);border-radius:4px;padding:18px;text-align:center;cursor:pointer;">
+            <div class="hint" id="vision-drop-hint">Drop an image here, or click to choose one</div>
+            <img id="vision-drop-preview" style="display:none;max-width:100%;max-height:200px;border-radius:4px;margin-top:8px;" />
+          </div>
+          <input type="file" id="vision-predict-file" accept=".png,.jpg,.jpeg,.gif,image/*" style="display:none;" />
+        </div>
+        <div class="field" style="margin-bottom:10px;">
+          <label>Prompt</label>
+          <input type="text" id="vision-predict-prompt" placeholder="Extract vendor, total and date as JSON." />
+        </div>
+        <button class="btn primary" id="vision-predict-btn">Predict</button>
+        <div id="predict-result"></div>
+      `
           : `
         ${
           !knownKey
@@ -1058,6 +1303,7 @@ async function renderDeployPanel(task) {
       }
     </div>
 
+    ${task.kind === "vision_lm" ? "" : `
     <div class="card">
       <h3>Batch inference</h3>
       <p class="hint">Upload a CSV with an "input" column (or one input per line) and get
@@ -1074,6 +1320,7 @@ async function renderDeployPanel(task) {
       `
       }
     </div>
+    `}
 
     <div class="card">
       <h3>Portable export</h3>
@@ -1082,6 +1329,7 @@ async function renderDeployPanel(task) {
       <button class="btn" id="export-btn" ${!latestJob ? "disabled" : ""}>Download export package</button>
     </div>
 
+    ${task.kind === "vision_lm" ? "" : `
     <div class="card">
       <h3>GGUF export (HomeBred-LLM / llama.cpp)</h3>
       <p class="hint">Download your trained model in GGUF format — load it directly into HomeBred-LLM
@@ -1106,6 +1354,7 @@ async function renderDeployPanel(task) {
         <div class="hint" id="gguf-progress-detail" style="margin-top:2px;"></div>
       </div>
     </div>
+    `}
   `;
 
   const deployBtn = document.getElementById("deploy-btn");
@@ -1143,6 +1392,80 @@ async function renderDeployPanel(task) {
       navigator.clipboard.writeText(knownKey).then(() => toast("API key copied."));
     };
   }
+
+  // --- Vision-language test tab: drag-drop image + prompt -> /predict ---
+  const dropZone = document.getElementById("vision-drop-zone");
+  if (dropZone) {
+    const fileInput = document.getElementById("vision-predict-file");
+    const preview = document.getElementById("vision-drop-preview");
+    const hint = document.getElementById("vision-drop-hint");
+    let selectedFile = null;
+
+    const showPreview = (file) => {
+      selectedFile = file;
+      preview.src = URL.createObjectURL(file);
+      preview.style.display = "block";
+      hint.textContent = file.name;
+    };
+
+    dropZone.onclick = () => fileInput.click();
+    fileInput.onchange = () => {
+      if (fileInput.files[0]) showPreview(fileInput.files[0]);
+    };
+    dropZone.ondragover = (e) => {
+      e.preventDefault();
+      dropZone.style.borderColor = "var(--accent, #999)";
+    };
+    dropZone.ondragleave = () => {
+      dropZone.style.borderColor = "var(--charcoal-3)";
+    };
+    dropZone.ondrop = (e) => {
+      e.preventDefault();
+      dropZone.style.borderColor = "var(--charcoal-3)";
+      const file = e.dataTransfer.files[0];
+      if (file) showPreview(file);
+    };
+
+    const visionPredictBtn = document.getElementById("vision-predict-btn");
+    visionPredictBtn.onclick = async () => {
+      const prompt = document.getElementById("vision-predict-prompt").value.trim();
+      if (!selectedFile) {
+        toast("Choose or drop an image first.", true);
+        return;
+      }
+      if (!prompt) {
+        toast("A prompt is required.", true);
+        return;
+      }
+      const key = knownKey || document.getElementById("predict-key").value.trim();
+      if (!key) {
+        toast("An API key is required to call the endpoint.", true);
+        return;
+      }
+      const form = new FormData();
+      form.append("file", selectedFile);
+      form.append("prompt", prompt);
+      try {
+        const res = await apiRawOrThrow("POST", `/inference/${deployment.id}/predict`, form, {
+          Authorization: "Bearer " + key,
+        });
+        const data = await res.json();
+        const result = data.result || {};
+        document.getElementById("predict-result").innerHTML = `
+          <div class="predict-result" style="margin-top:12px;">
+            <div class="hint">Model output:</div>
+            <div class="out" style="white-space:pre-wrap;">${escapeHtml(result.text || "")}</div>
+            <div class="conf" style="margin-top:6px;">
+              ${result.json_valid ? '<span class="badge" style="background:var(--ok);color:#fff;">valid JSON</span>' : '<span class="hint">not valid JSON</span>'}
+            </div>
+            ${result.json ? `<div class="hint" style="margin-top:8px;">Parsed JSON:</div><pre class="out">${escapeHtml(JSON.stringify(result.json, null, 2))}</pre>` : ""}
+          </div>`;
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
+  }
+
   const predictBtn = document.getElementById("predict-btn");
   if (predictBtn) {
     predictBtn.onclick = async () => {

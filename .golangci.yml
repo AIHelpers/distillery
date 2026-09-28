@@ -97,6 +97,14 @@ linters:
     - wrapcheck  # wrapping every stdlib error adds noise without much value here
     - gochecknoglobals  # composition-root globals are intentional in some deployments
   settings:
+    exhaustive:
+      # A switch with an explicit `default:` documenting which kinds fall
+      # through to shared handling (e.g. deployment_handler.go's Invoke,
+      # which special-cases seq_classifier/token_classifier and lets every
+      # other kind reach the shared "structured" path below the switch) is
+      # exhaustive by design; require the default to exist, don't require
+      # every enum member to get its own case too.
+      default-signifies-exhaustive: true
     depguard:
       rules:
         main:
@@ -272,6 +280,14 @@ linters:
         linters:
           - gocritic
         text: "(hugeParam|rangeValCopy)"
+      # domain.DatasetStats is passed by value as part of the
+      # domain.ModelSelector interface contract (Select); changing it to a
+      # pointer would ripple through every implementation, mock, and call
+      # site for a struct that's only ever read, not mutated, by Select.
+      - path: .*infra[\\/]simulation[\\/]model_selector\.go$
+        linters:
+          - gocritic
+        text: "hugeParam"
       # Loss trend comparison involves float comparisons; a switch would
       # not read more naturally than if/else for this three-way branch.
       - path: internal[\\/]infra[\\/]agent[\\/]coding_agent\.go$
@@ -327,10 +343,56 @@ linters:
       # Factory functions returning domain interfaces are the idiomatic
       # composition-root pattern for this project: the caller depends on
       # the interface, not the concrete type.
-      - path: .*(infra[\\/]agent[\\/]coding_agent\.go|infra[\\/]code[\\/]parsers\.go|repository[\\/]memory[\\/]tool_registry\.go)$
+      - path: .*(infra[\\/]agent[\\/]coding_agent\.go|infra[\\/]code[\\/]parsers\.go|repository[\\/]memory[\\/]tool_registry\.go|usecase[\\/]dataset[\\/]registry\.go|cmd[\\/]server[\\/]main\.go)$
         linters:
           - ireturn
         text: "returns interface"
+      # invokeVision wraps r.Body in http.MaxBytesReader(maxVisionUploadBytes)
+      # before calling ParseMultipartForm with that same bound, so the parse
+      # is already capacity-limited; gosec's G120 can't see the wrapping.
+      - path: .*delivery[\\/]http[\\/]deployment_handler\.go$
+        linters:
+          - gosec
+        text: "G120"
+      # DownloadGGUF serves the filePath returned by GetGGUFResult, which is
+      # always a path the exporter itself wrote (never derived from the
+      # sessionID or any other request input); gosec's SSA taint analysis
+      # can't see that the string only ever originates server-side.
+      - path: .*delivery[\\/]http[\\/]deployment_handler\.go$
+        linters:
+          - gosec
+        text: "G703"
+      # llamacpp launches e.cfg.Bin (an operator-configured executable path,
+      # not request input) with a model path built from job-store data; the
+      # same class of false positive already excluded for local_trainer.go.
+      - path: .*infra[\\/]serving[\\/]llamacpp\.go$
+        linters:
+          - gosec
+        text: "G204"
+      # Both GGUF converters here launch e.PythonBin (an operator-configured
+      # interpreter path, not request input) with arguments built from
+      # server-managed job/task directories, mirroring the local_trainer.go
+      # G204 false positive already excluded above.
+      - path: .*infra[\\/]training[\\/]exporter\.go$
+        linters:
+          - gosec
+        text: "G204"
+      # elemSize/size here are always looked up from the fixed
+      # ggufValueSizes map (values 1, 2, 4, or 8), never derived from the
+      # untrusted file, so the int -> uint64 widening can never overflow.
+      - path: .*infra[\\/]training[\\/]gguf_metadata\.go$
+        linters:
+          - gosec
+        text: "G115: integer overflow conversion int -> uint64"
+      # These dataset importers build small internal payloads
+      # (map[string]string, map[string]any with float64 labels, and typed
+      # domain.VisionPayload/EntitySpan structs) that are always
+      # JSON-serializable by construction; there is no error path to plumb
+      # for a marshal that can never fail.
+      - path: .*usecase[\\/]dataset_usecase_(ner|retrieval|vision|vision_test)\.go$
+        linters:
+          - errchkjson
+        text: "of `encoding/json.Marshal` is not checked"
 
 # ---------------------------------------------------------------------------
 # Formatters

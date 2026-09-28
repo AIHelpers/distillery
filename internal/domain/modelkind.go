@@ -23,10 +23,13 @@ const (
 	KindReranker ModelKind = "reranker"
 	// KindPreferenceLM is a preference/reward model trained with DPO.
 	KindPreferenceLM ModelKind = "preference_lm"
+	// KindVisionLM is a vision-language model fine-tuned to read images and
+	// documents and answer or extract structured data from them.
+	KindVisionLM ModelKind = "vision_lm"
 )
 
 // ValidModelKinds returns the set of supported model kinds. Wave 2 will add
-// KindVisionLM, KindASR, KindTabular, and KindTimeSeries.
+// KindASR, KindTabular, and KindTimeSeries.
 func ValidModelKinds() []ModelKind {
 	return []ModelKind{
 		KindCausalLM,
@@ -35,6 +38,7 @@ func ValidModelKinds() []ModelKind {
 		KindEmbedding,
 		KindReranker,
 		KindPreferenceLM,
+		KindVisionLM,
 	}
 }
 
@@ -69,6 +73,8 @@ func (k ModelKind) Description() string {
 		return "Score query-document pairs by relevance. Best for improving retrieval quality on top of an embedder."
 	case KindPreferenceLM:
 		return "Learn human preferences (DPO) to align a generator or rank candidate outputs."
+	case KindVisionLM:
+		return "Read images and documents and answer or extract structured data. Best for invoices, receipts, forms, ID documents, and photo/chart understanding."
 	default:
 		return string(k)
 	}

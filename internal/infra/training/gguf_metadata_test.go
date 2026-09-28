@@ -1,11 +1,14 @@
-package training
+package training_test
 
 import (
 	"bytes"
 	"encoding/binary"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"distillery/internal/infra/training"
 )
 
 // ggufTestKey describes a single metadata KV entry for building test fixtures.
@@ -31,11 +34,11 @@ func buildGGUFFixture(keys []ggufTestKey) []byte {
 
 	// Magic + version (v3).
 	buf.WriteString("GGUF")
-	binary.Write(buf, binary.LittleEndian, uint32(3))
+	_ = binary.Write(buf, binary.LittleEndian, uint32(3))
 
 	// n_tensors = 0, n_kv = len(keys).
-	binary.Write(buf, binary.LittleEndian, uint64(0))
-	binary.Write(buf, binary.LittleEndian, uint64(len(keys)))
+	_ = binary.Write(buf, binary.LittleEndian, uint64(0))
+	_ = binary.Write(buf, binary.LittleEndian, uint64(len(keys)))
 
 	// Value type is a u32 per the GGUF spec.
 	const (
@@ -46,18 +49,18 @@ func buildGGUFFixture(keys []ggufTestKey) []byte {
 	// KV pairs.
 	for _, k := range keys {
 		// key: [len:u64][bytes]
-		binary.Write(buf, binary.LittleEndian, uint64(len(k.key)))
+		_ = binary.Write(buf, binary.LittleEndian, uint64(len(k.key)))
 		buf.WriteString(k.key)
 
 		if k.isStr {
 			// value type 8 = string.
-			binary.Write(buf, binary.LittleEndian, uint32(ggufTypeString))
-			binary.Write(buf, binary.LittleEndian, uint64(len(k.str)))
+			_ = binary.Write(buf, binary.LittleEndian, uint32(ggufTypeString))
+			_ = binary.Write(buf, binary.LittleEndian, uint64(len(k.str)))
 			buf.WriteString(k.str)
 		} else {
 			// value type 10 = uint64.
-			binary.Write(buf, binary.LittleEndian, uint32(ggufTypeUint64))
-			binary.Write(buf, binary.LittleEndian, k.value)
+			_ = binary.Write(buf, binary.LittleEndian, uint32(ggufTypeUint64))
+			_ = binary.Write(buf, binary.LittleEndian, k.value)
 		}
 	}
 
@@ -90,12 +93,28 @@ func incompleteGQUFKeys() []ggufTestKey {
 	}
 }
 
+// ggufKeysFromBytes writes data to a temp file named name and returns
+// training.GGUFMetadataKeys(path) — the black-box equivalent of feeding an
+// in-memory reader directly to the unexported parser.
+func ggufKeysFromBytes(t *testing.T, data []byte, name string) ([]string, error) {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), name)
+
+	err := writeFile(path, data)
+	if err != nil {
+		t.Fatalf("failed to write fixture: %v", err)
+	}
+
+	return training.GGUFMetadataKeys(path)
+}
+
 func TestGGUFMetadataKeys_Complete(t *testing.T) {
 	t.Parallel()
 
 	data := buildGGUFFixture(completeGQUFKeys())
 
-	keys, err := ggufMetadataKeysReader(bytes.NewReader(data), "test-complete.gguf")
+	keys, err := ggufKeysFromBytes(t, data, "test-complete.gguf")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -120,7 +139,7 @@ func TestGGUFMetadataKeys_Complete(t *testing.T) {
 		}
 	}
 
-	if !GGUFHasTokenizerKeys(keys) {
+	if !training.GGUFHasTokenizerKeys(keys) {
 		t.Error("expected tokenizer keys to be detected")
 	}
 }
@@ -140,19 +159,19 @@ func TestGGUFMetadataKeys_U32TypeLayoutRoundTrip(t *testing.T) {
 
 	// Header: magic + version(3) + n_tensors(0) + n_kv(1).
 	buf.WriteString("GGUF")
-	binary.Write(buf, binary.LittleEndian, uint32(3))
-	binary.Write(buf, binary.LittleEndian, uint64(0))
-	binary.Write(buf, binary.LittleEndian, uint64(1))
+	_ = binary.Write(buf, binary.LittleEndian, uint32(3))
+	_ = binary.Write(buf, binary.LittleEndian, uint64(0))
+	_ = binary.Write(buf, binary.LittleEndian, uint64(1))
 
 	// KV: key "general.architecture", value_type=8(STRING), value "qwen3".
 	key := "general.architecture"
-	binary.Write(buf, binary.LittleEndian, uint64(len(key)))
+	_ = binary.Write(buf, binary.LittleEndian, uint64(len(key)))
 	buf.WriteString(key)
-	binary.Write(buf, binary.LittleEndian, uint32(8))
-	binary.Write(buf, binary.LittleEndian, uint64(len("qwen3")))
+	_ = binary.Write(buf, binary.LittleEndian, uint32(8))
+	_ = binary.Write(buf, binary.LittleEndian, uint64(len("qwen3")))
 	buf.WriteString("qwen3")
 
-	keys, err := ggufMetadataKeysReader(bytes.NewReader(buf.Bytes()), "u32-roundtrip.gguf")
+	keys, err := ggufKeysFromBytes(t, buf.Bytes(), "u32-roundtrip.gguf")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -167,7 +186,7 @@ func TestGGUFMetadataKeys_Incomplete(t *testing.T) {
 
 	data := buildGGUFFixture(incompleteGQUFKeys())
 
-	keys, err := ggufMetadataKeysReader(bytes.NewReader(data), "test-incomplete.gguf")
+	keys, err := ggufKeysFromBytes(t, data, "test-incomplete.gguf")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -176,7 +195,7 @@ func TestGGUFMetadataKeys_Incomplete(t *testing.T) {
 		t.Errorf("expected 4 metadata keys, got %d", len(keys))
 	}
 
-	if GGUFHasTokenizerKeys(keys) {
+	if training.GGUFHasTokenizerKeys(keys) {
 		t.Error("expected no tokenizer keys to be detected")
 	}
 }
@@ -199,7 +218,9 @@ func TestGGUFHasTokenizerKeys(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := GGUFHasTokenizerKeys(tc.keys)
+			t.Parallel()
+
+			got := training.GGUFHasTokenizerKeys(tc.keys)
 			if got != tc.want {
 				t.Errorf("GGUFHasTokenizerKeys(%v) = %v, want %v", tc.keys, got, tc.want)
 			}
@@ -212,7 +233,7 @@ func TestGGUFMetadataKeys_BadMagic(t *testing.T) {
 
 	data := []byte("NOTG")
 
-	_, err := ggufMetadataKeysReader(bytes.NewReader(data), "bad.gguf")
+	_, err := ggufKeysFromBytes(t, data, "bad.gguf")
 	if err == nil {
 		t.Fatal("expected error for bad magic")
 	}
@@ -229,7 +250,7 @@ func TestGGUFMetadataKeys_Truncated(t *testing.T) {
 	full := buildGGUFFixture(completeGQUFKeys())
 	truncated := full[:len(full)-5] // chop off part of the last KV value.
 
-	_, err := ggufMetadataKeysReader(bytes.NewReader(truncated), "trunc.gguf")
+	_, err := ggufKeysFromBytes(t, truncated, "trunc.gguf")
 	if err == nil {
 		t.Fatal("expected error for truncated GGUF")
 	}
@@ -252,7 +273,7 @@ func TestValidateGGUFCompleteness_CompleteFile(t *testing.T) {
 		t.Fatalf("failed to write fixture: %v", err)
 	}
 
-	err = ValidateGGUFCompleteness(path)
+	err = training.ValidateGGUFCompleteness(path)
 	if err != nil {
 		t.Errorf("expected complete GGUF to pass validation, got: %v", err)
 	}
@@ -265,11 +286,13 @@ func TestValidateGGUFCompleteness_IncompleteFile(t *testing.T) {
 	path := dir + "/incomplete.gguf"
 
 	data := buildGGUFFixture(incompleteGQUFKeys())
-	if err := writeFile(path, data); err != nil {
+
+	err := writeFile(path, data)
+	if err != nil {
 		t.Fatalf("failed to write fixture: %v", err)
 	}
 
-	err := ValidateGGUFCompleteness(path)
+	err = training.ValidateGGUFCompleteness(path)
 	if err == nil {
 		t.Fatal("expected incomplete GGUF to be rejected")
 	}
@@ -290,11 +313,12 @@ func TestValidateGGUFCompleteness_NotGGUF(t *testing.T) {
 	path := dir + "/notgguf.bin"
 
 	// 4-byte "GGUF" magic but truncated header.
-	if err := writeFile(path, []byte("GGUF\x03")); err != nil {
+	err := writeFile(path, []byte("GGUF\x03"))
+	if err != nil {
 		t.Fatalf("failed to write fixture: %v", err)
 	}
 
-	err := ValidateGGUFCompleteness(path)
+	err = training.ValidateGGUFCompleteness(path)
 	if err == nil {
 		t.Fatal("expected error for non-GGUF file")
 	}
@@ -307,7 +331,7 @@ func TestValidateGGUFCompleteness_NotGGUF(t *testing.T) {
 func TestValidateGGUFCompleteness_MissingFile(t *testing.T) {
 	t.Parallel()
 
-	err := ValidateGGUFCompleteness(t.TempDir() + "/nonexistent.gguf")
+	err := training.ValidateGGUFCompleteness(t.TempDir() + "/nonexistent.gguf")
 	if err == nil {
 		t.Fatal("expected error for missing file")
 	}

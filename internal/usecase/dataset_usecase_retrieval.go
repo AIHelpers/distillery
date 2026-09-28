@@ -10,6 +10,14 @@ import (
 	"distillery/internal/domain"
 )
 
+// Retrieval JSON field / embedding-type-prefix names shared across the
+// retrieval importers below and the embedding usecase.
+const (
+	fieldQuery    = "query"
+	fieldPositive = "positive"
+	fieldDocument = "document"
+)
+
 // ExamplePayload is a raw payload plus the query-group used for holdout
 // splitting. For pair/triplet examples the group is the query text; for
 // docs-only examples the group is the document text.
@@ -254,9 +262,9 @@ func retrievalLineToPayload(line string) (ExamplePayload, bool) {
 		}
 
 		payload, _ := json.Marshal(map[string]string{
-			"query":    probe.Query,
-			"positive": probe.Positive,
-			"negative": probe.Negative,
+			fieldQuery:    probe.Query,
+			fieldPositive: probe.Positive,
+			"negative":    probe.Negative,
 		})
 
 		return ExamplePayload{Payload: payload, Group: query}, true
@@ -270,22 +278,22 @@ func retrievalLineToPayload(line string) (ExamplePayload, bool) {
 		}
 
 		payload, _ := json.Marshal(map[string]any{
-			"query":    probe.Query,
-			"document": probe.Document,
-			"label":    label,
+			fieldQuery:    probe.Query,
+			fieldDocument: probe.Document,
+			"label":       label,
 		})
 
 		return ExamplePayload{Payload: payload, Group: query}, true
 	case doc != "" && query == "":
 		// Docs-only.
-		payload, _ := json.Marshal(map[string]string{"document": probe.Document})
+		payload, _ := json.Marshal(map[string]string{fieldDocument: probe.Document})
 
 		return ExamplePayload{Payload: payload, Group: doc}, true
 	case query != "" && strings.TrimSpace(probe.Positive) != "":
 		// Pair.
 		payload, _ := json.Marshal(map[string]string{
-			"query":    probe.Query,
-			"positive": probe.Positive,
+			fieldQuery:    probe.Query,
+			fieldPositive: probe.Positive,
 		})
 
 		return ExamplePayload{Payload: payload, Group: query}, true
@@ -303,18 +311,18 @@ type retrievalColumns struct {
 	label    int // -1 if absent.
 }
 
-func detectRetrievalColumns(header []string) (retrievalColumns, int) {
-	cols := retrievalColumns{query: -1, positive: -1, negative: -1, document: -1, label: -1}
+func detectRetrievalColumns(header []string) (cols retrievalColumns, start int) {
+	cols = retrievalColumns{query: -1, positive: -1, negative: -1, document: -1, label: -1}
 
 	for i, col := range header {
 		switch strings.ToLower(strings.TrimSpace(col)) {
-		case "query":
+		case fieldQuery:
 			cols.query = i
-		case "positive", "relevant", "doc_positive":
+		case fieldPositive, "relevant", "doc_positive":
 			cols.positive = i
 		case "negative", "hard_negative":
 			cols.negative = i
-		case "document", "doc":
+		case fieldDocument, "doc":
 			cols.document = i
 		case "label", "relevance", "score":
 			cols.label = i
@@ -357,35 +365,36 @@ func retrievalRowToPayload(rec []string, cols retrievalColumns) (ExamplePayload,
 		}
 
 		payload, _ := json.Marshal(map[string]string{
-			"query":    query,
-			"positive": positive,
-			"negative": negative,
+			fieldQuery:    query,
+			fieldPositive: positive,
+			"negative":    negative,
 		})
 
 		return ExamplePayload{Payload: payload, Group: query}, true
 	case doc != "" && query != "":
 		label := 1.0
 		if cols.label >= 0 && cols.label < len(rec) {
-			if l, err := parseLabel(get(cols.label)); err == nil {
+			l, err := parseLabel(get(cols.label))
+			if err == nil {
 				label = l
 			}
 		}
 
 		payload, _ := json.Marshal(map[string]any{
-			"query":    query,
-			"document": doc,
-			"label":    label,
+			fieldQuery:    query,
+			fieldDocument: doc,
+			"label":       label,
 		})
 
 		return ExamplePayload{Payload: payload, Group: query}, true
 	case doc != "" && query == "":
-		payload, _ := json.Marshal(map[string]string{"document": doc})
+		payload, _ := json.Marshal(map[string]string{fieldDocument: doc})
 
 		return ExamplePayload{Payload: payload, Group: doc}, true
 	case query != "" && positive != "":
 		payload, _ := json.Marshal(map[string]string{
-			"query":    query,
-			"positive": positive,
+			fieldQuery:    query,
+			fieldPositive: positive,
 		})
 
 		return ExamplePayload{Payload: payload, Group: query}, true
@@ -460,8 +469,8 @@ func normalizeGeneratedQuery(g *domain.Example) (json.RawMessage, bool) {
 
 		if strings.TrimSpace(probe.Query) != "" && strings.TrimSpace(probe.Document) != "" {
 			payload, _ := json.Marshal(map[string]string{
-				"query":    probe.Query,
-				"positive": probe.Document,
+				fieldQuery:    probe.Query,
+				fieldPositive: probe.Document,
 			})
 
 			g.Source = domain.SourceSynthetic
@@ -474,8 +483,8 @@ func normalizeGeneratedQuery(g *domain.Example) (json.RawMessage, bool) {
 	// Output as the positive document.
 	if strings.TrimSpace(g.Input) != "" && strings.TrimSpace(g.Output) != "" {
 		payload, _ := json.Marshal(map[string]string{
-			"query":    g.Input,
-			"positive": g.Output,
+			fieldQuery:    g.Input,
+			fieldPositive: g.Output,
 		})
 
 		g.Source = domain.SourceSynthetic

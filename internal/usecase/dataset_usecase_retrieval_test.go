@@ -33,7 +33,8 @@ func TestDatasetUsecase_ImportRetrievalJSONL_Pairs(t *testing.T) {
 		Positive string `json:"positive"`
 	}
 
-	if err := json.Unmarshal(examples.addBatch[0].Payload, &probe); err != nil {
+	err = json.Unmarshal(examples.addBatch[0].Payload, &probe)
+	if err != nil {
 		t.Fatalf("payload not valid JSON: %v", err)
 	}
 
@@ -70,7 +71,8 @@ func TestDatasetUsecase_ImportRetrievalJSONL_Triplets(t *testing.T) {
 		Negative string `json:"negative"`
 	}
 
-	if err := json.Unmarshal(examples.addBatch[0].Payload, &probe); err != nil {
+	err = json.Unmarshal(examples.addBatch[0].Payload, &probe)
+	if err != nil {
 		t.Fatalf("payload not valid JSON: %v", err)
 	}
 
@@ -99,7 +101,8 @@ func TestDatasetUsecase_ImportRetrievalJSONL_Graded(t *testing.T) {
 		Label    float64 `json:"label"`
 	}
 
-	if err := json.Unmarshal(examples.addBatch[0].Payload, &probe); err != nil {
+	err = json.Unmarshal(examples.addBatch[0].Payload, &probe)
+	if err != nil {
 		t.Fatalf("payload not valid JSON: %v", err)
 	}
 
@@ -130,7 +133,8 @@ func TestDatasetUsecase_ImportRetrievalJSONL_DocsOnly(t *testing.T) {
 		Document string `json:"document"`
 	}
 
-	if err := json.Unmarshal(examples.addBatch[0].Payload, &probe); err != nil {
+	err = json.Unmarshal(examples.addBatch[0].Payload, &probe)
+	if err != nil {
 		t.Fatalf("payload not valid JSON: %v", err)
 	}
 
@@ -212,7 +216,8 @@ func TestDatasetUsecase_ImportRetrievalCSV_Pairs(t *testing.T) {
 		Positive string `json:"positive"`
 	}
 
-	if err := json.Unmarshal(examples.addBatch[0].Payload, &probe); err != nil {
+	err = json.Unmarshal(examples.addBatch[0].Payload, &probe)
+	if err != nil {
 		t.Fatalf("payload not valid JSON: %v", err)
 	}
 
@@ -242,7 +247,8 @@ func TestDatasetUsecase_ImportRetrievalCSV_PositiveSynonyms(t *testing.T) {
 		Negative string `json:"negative"`
 	}
 
-	if err := json.Unmarshal(examples.addBatch[0].Payload, &probe); err != nil {
+	err = json.Unmarshal(examples.addBatch[0].Payload, &probe)
+	if err != nil {
 		t.Fatalf("payload not valid JSON: %v", err)
 	}
 
@@ -271,7 +277,8 @@ func TestDatasetUsecase_ImportRetrievalCSV_GradedLabel(t *testing.T) {
 		Label    float64 `json:"label"`
 	}
 
-	if err := json.Unmarshal(examples.addBatch[1].Payload, &probe); err != nil {
+	err = json.Unmarshal(examples.addBatch[1].Payload, &probe)
+	if err != nil {
 		t.Fatalf("payload not valid JSON: %v", err)
 	}
 
@@ -300,7 +307,8 @@ func TestDatasetUsecase_ImportRetrievalCSV_NoHeaderFallback(t *testing.T) {
 		Positive string `json:"positive"`
 	}
 
-	if err := json.Unmarshal(examples.addBatch[0].Payload, &probe); err != nil {
+	err = json.Unmarshal(examples.addBatch[0].Payload, &probe)
+	if err != nil {
 		t.Fatalf("payload not valid JSON: %v", err)
 	}
 
@@ -340,7 +348,8 @@ func TestDatasetUsecase_ImportRetrievalJSONL_HoldoutSplitIsDeterministic(t *test
 			"{\"query\":\"q4\",\"positive\":\"d4a\"}\n" +
 			"{\"query\":\"q5\",\"positive\":\"d5a\"}\n"
 
-		if _, err := uc.ImportRetrievalJSONL("task_1", content); err != nil {
+		_, err := uc.ImportRetrievalJSONL("task_1", content)
+		if err != nil {
 			t.Fatalf("import failed: %v", err)
 		}
 
@@ -421,7 +430,8 @@ func TestDatasetUsecase_GenerateQueriesFromDocs_Valid(t *testing.T) {
 		Positive string `json:"positive"`
 	}
 
-	if err := json.Unmarshal(examples.addBatch[0].Payload, &probe); err != nil {
+	err = json.Unmarshal(examples.addBatch[0].Payload, &probe)
+	if err != nil {
 		t.Fatalf("payload not valid JSON: %v", err)
 	}
 
@@ -458,7 +468,8 @@ func TestDatasetUsecase_GenerateQueriesFromDocs_BareQueryFallback(t *testing.T) 
 		Positive string `json:"positive"`
 	}
 
-	if err := json.Unmarshal(examples.addBatch[0].Payload, &probe); err != nil {
+	err = json.Unmarshal(examples.addBatch[0].Payload, &probe)
+	if err != nil {
 		t.Fatalf("payload not valid JSON: %v", err)
 	}
 

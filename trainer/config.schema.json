@@ -152,7 +152,8 @@
         "token_classifier",
         "embedding",
         "reranker",
-        "preference_lm"
+        "preference_lm",
+        "vision_lm"
       ]
     },
     "max_length": {
@@ -252,6 +253,24 @@
     "json_schema": {
       "type": "string",
       "description": "causal_lm (Track B): JSON schema the task's outputs must satisfy."
+    },
+    "images_dir": {
+      "type": "string",
+      "description": "Directory the blob store materialized this task images under (vision_lm only); payload \"image\" fields resolve relative to it."
+    },
+    "max_image_side": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Longest image edge (px) before downscaling (vision_lm only). 0 = trainer default."
+    },
+    "max_new_tokens": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Generation length cap for vision_lm eval/inference."
+    },
+    "freeze_vision_encoder": {
+      "type": "boolean",
+      "description": "Keep the vision tower frozen and train LoRA only on the language tower (vision_lm only). Default true."
     }
   }
 }

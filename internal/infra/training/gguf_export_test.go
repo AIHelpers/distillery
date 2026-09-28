@@ -47,6 +47,8 @@ func TestEventPercent(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.event, func(t *testing.T) {
+			t.Parallel()
+
 			pct, step := training.EventPercent(tc.event)
 			if pct != tc.wantPercent {
 				t.Errorf("eventPercent(%q) percent = %d, want %d", tc.event, pct, tc.wantPercent)
@@ -89,13 +91,16 @@ func TestPreferredGGUF_Manifest(t *testing.T) {
 	dir := t.TempDir()
 
 	// Write a real GGUF-magic file.
-	if err := os.WriteFile(filepath.Join(dir, "task-q4_k_m.gguf"), []byte("GGUF\x03\x00\x00\x00"), 0o644); err != nil {
+	err := os.WriteFile(filepath.Join(dir, "task-q4_k_m.gguf"), []byte("GGUF\x03\x00\x00\x00"), 0o644)
+	if err != nil {
 		t.Fatalf("failed to write gguf: %v", err)
 	}
 
 	// Write a manifest pointing to it.
 	manifest := `{"format":"gguf","quantization":"q4_k_m","file":"task-q4_k_m.gguf","size_bytes":8}`
-	if err := os.WriteFile(filepath.Join(dir, "gguf-manifest.json"), []byte(manifest), 0o644); err != nil {
+
+	err = os.WriteFile(filepath.Join(dir, "gguf-manifest.json"), []byte(manifest), 0o644)
+	if err != nil {
 		t.Fatalf("failed to write manifest: %v", err)
 	}
 
@@ -116,7 +121,8 @@ func TestPreferredGGUF_GlobOnly(t *testing.T) {
 
 	dir := t.TempDir()
 
-	if err := os.WriteFile(filepath.Join(dir, "model-f16.gguf"), []byte("GGUF\x03\x00\x00\x00"), 0o644); err != nil {
+	err := os.WriteFile(filepath.Join(dir, "model-f16.gguf"), []byte("GGUF\x03\x00\x00\x00"), 0o644)
+	if err != nil {
 		t.Fatalf("failed to write gguf: %v", err)
 	}
 
@@ -154,7 +160,9 @@ func TestBuildGGUF_CacheHit(t *testing.T) {
 
 	// Simulate a cached GGUF produced by a prior conversion.
 	ggufDir := filepath.Join(dir, job.ID, "gguf")
-	if err := os.MkdirAll(ggufDir, 0o755); err != nil {
+
+	err := os.MkdirAll(ggufDir, 0o755)
+	if err != nil {
 		t.Fatalf("failed mkdir: %v", err)
 	}
 
@@ -162,7 +170,9 @@ func TestBuildGGUF_CacheHit(t *testing.T) {
 	// the completeness gate passes. Without the tokenizer keys this cache
 	// entry would be rejected as an incomplete export.
 	ggufData := buildCompleteGGUFBytes()
-	if err := os.WriteFile(filepath.Join(ggufDir, "cache-task-q4_k_m.gguf"), ggufData, 0o644); err != nil {
+
+	err = os.WriteFile(filepath.Join(ggufDir, "cache-task-q4_k_m.gguf"), ggufData, 0o644)
+	if err != nil {
 		t.Fatalf("failed to write cached gguf: %v", err)
 	}
 
@@ -197,17 +207,21 @@ func TestBuildGGUF_CacheHit_RejectsIncomplete(t *testing.T) {
 
 	// Simulate a cached GGUF produced by a broken/incomplete export.
 	ggufDir := filepath.Join(dir, job.ID, "gguf")
-	if err := os.MkdirAll(ggufDir, 0o755); err != nil {
+
+	err := os.MkdirAll(ggufDir, 0o755)
+	if err != nil {
 		t.Fatalf("failed mkdir: %v", err)
 	}
 
 	// Metadata with architecture/weights keys but NO tokenizer keys.
 	ggufData := buildIncompleteGGUFBytes()
-	if err := os.WriteFile(filepath.Join(ggufDir, "broken-q4_k_m.gguf"), ggufData, 0o644); err != nil {
+
+	err = os.WriteFile(filepath.Join(ggufDir, "broken-q4_k_m.gguf"), ggufData, 0o644)
+	if err != nil {
 		t.Fatalf("failed to write cached gguf: %v", err)
 	}
 
-	_, _, err := le.BuildGGUF(
+	_, _, err = le.BuildGGUF(
 		&domain.Task{Name: "Broken", Type: domain.TaskGeneration, ID: "t1", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}},
 		job,
 		domain.GGUFExportOptions{Quantization: "q4_k_m"},
@@ -235,44 +249,44 @@ func buildCompleteGGUFBytes() []byte {
 		buf       bytes.Buffer
 	)
 
-	buf.WriteString("GGUF")                  // magic.
-	binary.Write(&buf, byteOrder, uint32(3)) // version.
-	binary.Write(&buf, byteOrder, uint64(0)) // n_tensors.
-	binary.Write(&buf, byteOrder, uint64(8)) // n_kv.
+	buf.WriteString("GGUF")                      // magic.
+	_ = binary.Write(&buf, byteOrder, uint32(3)) // version.
+	_ = binary.Write(&buf, byteOrder, uint64(0)) // n_tensors.
+	_ = binary.Write(&buf, byteOrder, uint64(8)) // n_kv.
 
 	// NOTE: value types are u32 (4 bytes) per the GGUF spec, matching what
 	// llama.cpp and the python gguf writer emit.
 	writeGQUFString(&buf, byteOrder, "general.architecture")
-	binary.Write(&buf, byteOrder, uint32(8)) // string type.
+	_ = binary.Write(&buf, byteOrder, uint32(8)) // string type.
 	writeGQUFString(&buf, byteOrder, "qwen3")
 
 	writeGQUFString(&buf, byteOrder, "general.name")
-	binary.Write(&buf, byteOrder, uint32(8))
+	_ = binary.Write(&buf, byteOrder, uint32(8))
 	writeGQUFString(&buf, byteOrder, "cache-task")
 
 	writeGQUFString(&buf, byteOrder, "qwen3.block_count")
-	binary.Write(&buf, byteOrder, uint32(10)) // uint64.
-	binary.Write(&buf, byteOrder, uint64(32))
+	_ = binary.Write(&buf, byteOrder, uint32(10)) // uint64.
+	_ = binary.Write(&buf, byteOrder, uint64(32))
 
 	writeGQUFString(&buf, byteOrder, "qwen3.context_length")
-	binary.Write(&buf, byteOrder, uint32(10))
-	binary.Write(&buf, byteOrder, uint64(4096))
+	_ = binary.Write(&buf, byteOrder, uint32(10))
+	_ = binary.Write(&buf, byteOrder, uint64(4096))
 
 	writeGQUFString(&buf, byteOrder, "tokenizer.ggml.model")
-	binary.Write(&buf, byteOrder, uint32(8))
+	_ = binary.Write(&buf, byteOrder, uint32(8))
 	writeGQUFString(&buf, byteOrder, "qwen3")
 
 	writeGQUFString(&buf, byteOrder, "tokenizer.ggml.tokens")
-	binary.Write(&buf, byteOrder, uint32(10))
-	binary.Write(&buf, byteOrder, uint64(151936))
+	_ = binary.Write(&buf, byteOrder, uint32(10))
+	_ = binary.Write(&buf, byteOrder, uint64(151936))
 
 	writeGQUFString(&buf, byteOrder, "tokenizer.ggml.bos_token_id")
-	binary.Write(&buf, byteOrder, uint32(10))
-	binary.Write(&buf, byteOrder, uint64(151643))
+	_ = binary.Write(&buf, byteOrder, uint32(10))
+	_ = binary.Write(&buf, byteOrder, uint64(151643))
 
 	writeGQUFString(&buf, byteOrder, "tokenizer.ggml.eos_token_id")
-	binary.Write(&buf, byteOrder, uint32(10))
-	binary.Write(&buf, byteOrder, uint64(151645))
+	_ = binary.Write(&buf, byteOrder, uint32(10))
+	_ = binary.Write(&buf, byteOrder, uint64(151645))
 
 	return buf.Bytes()
 }
@@ -285,34 +299,34 @@ func buildIncompleteGGUFBytes() []byte {
 		buf       bytes.Buffer
 	)
 
-	buf.WriteString("GGUF")                  // magic.
-	binary.Write(&buf, byteOrder, uint32(3)) // version.
-	binary.Write(&buf, byteOrder, uint64(0)) // n_tensors.
-	binary.Write(&buf, byteOrder, uint64(4)) // n_kv.
+	buf.WriteString("GGUF")                      // magic.
+	_ = binary.Write(&buf, byteOrder, uint32(3)) // version.
+	_ = binary.Write(&buf, byteOrder, uint64(0)) // n_tensors.
+	_ = binary.Write(&buf, byteOrder, uint64(4)) // n_kv.
 
 	// NOTE: value types are u32 (4 bytes) per the GGUF spec.
 	writeGQUFString(&buf, byteOrder, "general.architecture")
-	binary.Write(&buf, byteOrder, uint32(8))
+	_ = binary.Write(&buf, byteOrder, uint32(8))
 	writeGQUFString(&buf, byteOrder, "qwen3")
 
 	writeGQUFString(&buf, byteOrder, "general.name")
-	binary.Write(&buf, byteOrder, uint32(8))
+	_ = binary.Write(&buf, byteOrder, uint32(8))
 	writeGQUFString(&buf, byteOrder, "cache-task")
 
 	writeGQUFString(&buf, byteOrder, "qwen3.block_count")
-	binary.Write(&buf, byteOrder, uint32(10))
-	binary.Write(&buf, byteOrder, uint64(32))
+	_ = binary.Write(&buf, byteOrder, uint32(10))
+	_ = binary.Write(&buf, byteOrder, uint64(32))
 
 	writeGQUFString(&buf, byteOrder, "qwen3.context_length")
-	binary.Write(&buf, byteOrder, uint32(10))
-	binary.Write(&buf, byteOrder, uint64(4096))
+	_ = binary.Write(&buf, byteOrder, uint32(10))
+	_ = binary.Write(&buf, byteOrder, uint64(4096))
 
 	return buf.Bytes()
 }
 
 // writeGQUFString writes a length-prefixed string to buf.
 func writeGQUFString(buf *bytes.Buffer, byteOrder binary.ByteOrder, s string) {
-	binary.Write(buf, byteOrder, uint64(len(s)))
+	_ = binary.Write(buf, byteOrder, uint64(len(s)))
 	buf.WriteString(s)
 }
 

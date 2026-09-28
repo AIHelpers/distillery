@@ -105,53 +105,50 @@ func (s *GGUFProgressStore) Cleanup(maxAge time.Duration) {
 	s.mu.Unlock()
 }
 
+// eventPercentStep pairs the approximate percent and step description
+// ggufEventPercents maps a Python converter event type to.
+type eventPercentStep struct {
+	percent int
+	step    string
+}
+
+// ggufEventPercents maps a Python converter event type to its approximate
+// percent and step description. An event not in this map, or one whose
+// value carries no percent change (-1), falls through to eventPercentUnset.
+var ggufEventPercents = map[string]eventPercentStep{
+	"disk_space_check":              {1, "Checking free disk space"},
+	"conversion_started":            {2, "Starting conversion"},
+	"cache_hit":                     {100, "Served from cache"},
+	"cache_hit_after_wait":          {100, "Served from cache"},
+	"merge_started":                 {5, "Merging LoRA adapter"},
+	"merge_completed":               {15, "Merge complete"},
+	"base_model_download_started":   {5, "Downloading base model"},
+	"base_model_download_completed": {15, "Base model downloaded"},
+	"convert_hf_to_gguf_started":    {20, "Converting to GGUF"},
+	"loading_safetensors":           {30, "Loading model weights"},
+	"convert_hf_to_gguf_completed":  {55, "GGUF conversion complete"},
+	"quantize_started":              {60, "Quantizing model"},
+	"quantize_completed":            {90, "Quantization complete"},
+	"emitted":                       {95, "Finalizing output"},
+	"verify_started":                {97, "Verifying GGUF"},
+	"verify_ok":                     {100, "Verification complete"},
+	"verify_ok_header_only":         {100, "Verification complete"},
+	"lock_wait":                     {-1, "Waiting for another conversion to finish"},
+	"done":                          {100, "Complete"},
+	// Sub-step / warning / error events carry no percent change; the async
+	// runner handles "error" separately.
+	"tokenizer_warning":        {-1, ""},
+	"quantize_tensor_fallback": {-1, ""},
+	"verify_warning":           {-1, ""},
+	"error":                    {-1, ""},
+}
+
 // EventPercent maps a Python converter event type to an approximate percent
 // and step description. Exported for testability.
-func EventPercent(eventType string) (int, string) {
-	switch eventType {
-	case "disk_space_check":
-		return 1, "Checking free disk space"
-	case "conversion_started":
-		return 2, "Starting conversion"
-	case "cache_hit", "cache_hit_after_wait":
-		return 100, "Served from cache"
-	case "merge_started":
-		return 5, "Merging LoRA adapter"
-	case "merge_completed":
-		return 15, "Merge complete"
-	case "base_model_download_started":
-		return 5, "Downloading base model"
-	case "base_model_download_completed":
-		return 15, "Base model downloaded"
-	case "convert_hf_to_gguf_started":
-		return 20, "Converting to GGUF"
-	case "loading_safetensors":
-		return 30, "Loading model weights"
-	case "tokenizer_warning":
-		return -1, "" // no percent change.
-	case "convert_hf_to_gguf_completed":
-		return 55, "GGUF conversion complete"
-	case "quantize_started":
-		return 60, "Quantizing model"
-	case "quantize_tensor_fallback":
-		return -1, "" // sub-step, no change.
-	case "quantize_completed":
-		return 90, "Quantization complete"
-	case "emitted":
-		return 95, "Finalizing output"
-	case "verify_started":
-		return 97, "Verifying GGUF"
-	case "verify_ok", "verify_ok_header_only":
-		return 100, "Verification complete"
-	case "verify_warning":
-		return -1, "" // keep current.
-	case "lock_wait":
-		return -1, "Waiting for another conversion to finish"
-	case "done":
-		return 100, "Complete"
-	case "error":
-		return -1, "" // error handled separately by the async runner.
-	default:
-		return -1, ""
+func EventPercent(eventType string) (percent int, step string) {
+	if ps, ok := ggufEventPercents[eventType]; ok {
+		return ps.percent, ps.step
 	}
+
+	return -1, ""
 }

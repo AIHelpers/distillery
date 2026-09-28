@@ -56,6 +56,13 @@ type Config struct {
 	// MaxJobHistory keeps the N most-recent *completed/failed* job dirs on
 	// disk; older checkpoints are removed during Cleanup. 0 = keep all.
 	MaxJobHistory int
+	// BlobRoot is the root directory vision_lm example images are stored
+	// under (one subdirectory per task ID) — see internal/infra/blob. The
+	// vision trainer resolves each example's "image" payload field as a
+	// plain file read under BlobRoot/{taskID}/, so images never need to be
+	// copied into the per-job working directory. Defaults to "./data/blobs"
+	// (matching blob.NewLocalStore's own default) when empty.
+	BlobRoot string
 }
 
 // LocalTrainer implements domain.FineTuner by launching the Python training
@@ -95,6 +102,10 @@ func NewLocalTrainer(cfg *Config) *LocalTrainer {
 
 	if cfg.JobsDir == "" {
 		cfg.JobsDir = filepath.Join(".", "data", "training")
+	}
+
+	if cfg.BlobRoot == "" {
+		cfg.BlobRoot = filepath.Join(".", "data", "blobs")
 	}
 
 	if cfg.MaxConcurrentJobs <= 0 {
@@ -209,7 +220,14 @@ func (l *LocalTrainer) AddActiveJob(jobID string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	l.active[&trainingProcess{job: &domain.TrainingJob{ID: jobID, TaskID: "", Version: 0, BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""}, Status: "", Progress: 0, Metrics: nil, Error: "", CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil}}] = true
+	l.active[&trainingProcess{
+		job: &domain.TrainingJob{
+			ID: jobID, TaskID: "", Version: 0,
+			BaseModel: domain.BaseModel{Name: "", ParamsBillions: 0, Family: ""},
+			Status:    "", Progress: 0, Metrics: nil, Error: "",
+			CreatedAt: time.Time{}, StartedAt: nil, CompletedAt: nil,
+		},
+	}] = true
 }
 
 // GCOldJobs runs the retention GC once (test helper).
@@ -380,6 +398,79 @@ func (l *LocalTrainer) finish(
 	proc.onDone(metrics, err)
 }
 
+// metricsJSON is the shape of metrics.json produced by the Python worker,
+// covering every task kind (classifier, NER, preference-tuning, retrieval,
+// vision-language) in one struct since a single training job only ever
+// populates the fields relevant to its own kind.
+type metricsJSON struct {
+	Status string  `json:"status"`
+	Loss   float64 `json:"eval_loss"`
+	// Python writes a fractional epoch (e.g. 3.75); an int field would
+	// fail to unmarshal and mark the whole run "malformed".
+	Epochs     float64                           `json:"epoch"`
+	Train      int                               `json:"train_examples"`
+	Steps      int                               `json:"global_step"`
+	Best       string                            `json:"best_checkpoint"`
+	TookSec    float64                           `json:"train_runtime"`
+	Kind       string                            `json:"kind"`
+	Accuracy   float64                           `json:"accuracy"`
+	MacroF1    float64                           `json:"macro_f1"`
+	WeightedF1 float64                           `json:"weighted_f1"`
+	BaselineF1 float64                           `json:"baseline_macro_f1"`
+	DeltaF1    float64                           `json:"delta_macro_f1"`
+	Threshold  float64                           `json:"default_threshold"`
+	MaxLength  int                               `json:"max_length"`
+	MultiLabel bool                              `json:"multi_label"`
+	PerClass   map[string]domain.PerClassMetrics `json:"per_class"`
+	ConfMatrix domain.ConfusionMatrix            `json:"confusion_matrix"`
+	LabelMap   map[string]int                    `json:"label_map"`
+	Thresholds []domain.ThresholdSweepPoint      `json:"threshold_sweep"`
+
+	// NER metrics (token_classifier tasks).
+	EntityF1  float64                            `json:"entity_f1"`
+	EntityP   float64                            `json:"entity_precision"`
+	EntityR   float64                            `json:"entity_recall"`
+	PartialF1 float64                            `json:"partial_micro_f1"`
+	PerEntity map[string]domain.PerEntityMetrics `json:"per_entity"`
+
+	// Preference-tuning metrics (preference_lm / DPO-ORPO tasks).
+	RewardAccuracy float64 `json:"reward_accuracy"`
+	RewardMargin   float64 `json:"reward_margin"`
+	WinRate        float64 `json:"win_rate"`
+	WinRateVotes   int     `json:"win_rate_votes"`
+	AvgChosenLen   float64 `json:"avg_chosen_len"`
+	AvgRejectedLen float64 `json:"avg_rejected_len"`
+	RegChecked     bool    `json:"regression_checked"`
+	RegMetric      string  `json:"regression_metric"`
+	RegBase        float64 `json:"regression_base"`
+	RegValue       float64 `json:"regression_value"`
+	RegDelta       float64 `json:"regression_delta"`
+	RegPassed      bool    `json:"regression_passed"`
+
+	// Retrieval metrics (embedding/reranker tasks).
+	TunedNDCG10   float64 `json:"tuned_ndcg@10"`
+	TunedMRR10    float64 `json:"tuned_mrr@10"`
+	TunedRecall1  float64 `json:"tuned_recall@1"`
+	TunedRecall5  float64 `json:"tuned_recall@5"`
+	TunedRecall10 float64 `json:"tuned_recall@10"`
+	BaseNDCG10    float64 `json:"base_ndcg@10"`
+	BaseMRR10     float64 `json:"base_mrr@10"`
+	BaseRecall1   float64 `json:"base_recall@1"`
+	BaseRecall5   float64 `json:"base_recall@5"`
+	BaseRecall10  float64 `json:"base_recall@10"`
+	EmbeddingDim  int     `json:"embedding_dim"`
+	IndexEstimate int64   `json:"index_size_estimate"`
+
+	// Vision-language metrics (vision_lm tasks).
+	FieldMetrics     map[string]domain.FieldMetric `json:"field_metrics"`
+	JSONValidRate    float64                       `json:"json_valid_rate"`
+	ANLS             float64                       `json:"anls"`
+	DocumentAccuracy float64                       `json:"document_accuracy"`
+	BaselineFieldF1  float64                       `json:"baseline_field_f1"`
+	MacroFieldF1     float64                       `json:"macro_field_f1"`
+	DeltaFieldF1     float64                       `json:"delta_field_f1"`
+}
+
 // readMetrics reads the metrics.json produced by the Python worker.
 func (l *LocalTrainer) readMetrics(ctx context.Context, jobDir string, runErr error) (*domain.TrainingMetrics, error) {
 	metricsPath := filepath.Join(jobDir, "metrics.json")
@@ -394,65 +485,7 @@ func (l *LocalTrainer) readMetrics(ctx context.Context, jobDir string, runErr er
 		return nil, fmt.Errorf("no metrics.json produced: %w", err)
 	}
 
-	var m struct {
-		Status string  `json:"status"`
-		Loss   float64 `json:"eval_loss"`
-		// Python writes a fractional epoch (e.g. 3.75); an int field would
-		// fail to unmarshal and mark the whole run "malformed".
-		Epochs     float64                           `json:"epoch"`
-		Train      int                               `json:"train_examples"`
-		Steps      int                               `json:"global_step"`
-		Best       string                            `json:"best_checkpoint"`
-		TookSec    float64                           `json:"train_runtime"`
-		Kind       string                            `json:"kind"`
-		Accuracy   float64                           `json:"accuracy"`
-		MacroF1    float64                           `json:"macro_f1"`
-		WeightedF1 float64                           `json:"weighted_f1"`
-		BaselineF1 float64                           `json:"baseline_macro_f1"`
-		DeltaF1    float64                           `json:"delta_macro_f1"`
-		Threshold  float64                           `json:"default_threshold"`
-		MaxLength  int                               `json:"max_length"`
-		MultiLabel bool                              `json:"multi_label"`
-		PerClass   map[string]domain.PerClassMetrics `json:"per_class"`
-		ConfMatrix domain.ConfusionMatrix            `json:"confusion_matrix"`
-		LabelMap   map[string]int                    `json:"label_map"`
-		Thresholds []domain.ThresholdSweepPoint      `json:"threshold_sweep"`
-
-		// NER metrics (token_classifier tasks).
-		EntityF1  float64                            `json:"entity_f1"`
-		EntityP   float64                            `json:"entity_precision"`
-		EntityR   float64                            `json:"entity_recall"`
-		PartialF1 float64                            `json:"partial_micro_f1"`
-		PerEntity map[string]domain.PerEntityMetrics `json:"per_entity"`
-
-		// Preference-tuning metrics (preference_lm / DPO-ORPO tasks).
-		RewardAccuracy float64 `json:"reward_accuracy"`
-		RewardMargin   float64 `json:"reward_margin"`
-		WinRate        float64 `json:"win_rate"`
-		WinRateVotes   int     `json:"win_rate_votes"`
-		AvgChosenLen   float64 `json:"avg_chosen_len"`
-		AvgRejectedLen float64 `json:"avg_rejected_len"`
-		RegChecked     bool    `json:"regression_checked"`
-		RegMetric      string  `json:"regression_metric"`
-		RegBase        float64 `json:"regression_base"`
-		RegValue       float64 `json:"regression_value"`
-		RegDelta       float64 `json:"regression_delta"`
-		RegPassed      bool    `json:"regression_passed"`
-
-		// Retrieval metrics (embedding/reranker tasks).
-		TunedNDCG10   float64 `json:"tuned_ndcg@10"`
-		TunedMRR10    float64 `json:"tuned_mrr@10"`
-		TunedRecall1  float64 `json:"tuned_recall@1"`
-		TunedRecall5  float64 `json:"tuned_recall@5"`
-		TunedRecall10 float64 `json:"tuned_recall@10"`
-		BaseNDCG10    float64 `json:"base_ndcg@10"`
-		BaseMRR10     float64 `json:"base_mrr@10"`
-		BaseRecall1   float64 `json:"base_recall@1"`
-		BaseRecall5   float64 `json:"base_recall@5"`
-		BaseRecall10  float64 `json:"base_recall@10"`
-		EmbeddingDim  int     `json:"embedding_dim"`
-		IndexEstimate int64   `json:"index_size_estimate"`
-	}
+	var m metricsJSON
 
 	err = json.Unmarshal(data, &m)
 	if err != nil {
@@ -463,6 +496,11 @@ func (l *LocalTrainer) readMetrics(ctx context.Context, jobDir string, runErr er
 		return nil, fmt.Errorf("%w (status=%q)", ErrTrainingFailed, m.Status)
 	}
 
+	return metricsJSONToDomain(&m), nil
+}
+
+// metricsJSONToDomain maps the raw metrics.json shape onto domain.TrainingMetrics.
+func metricsJSONToDomain(m *metricsJSON) *domain.TrainingMetrics {
 	return &domain.TrainingMetrics{
 		FinalLoss:     m.Loss,
 		EvalAccuracy:  m.Accuracy,
@@ -502,7 +540,16 @@ func (l *LocalTrainer) readMetrics(ctx context.Context, jobDir string, runErr er
 		RegressionValue:   m.RegValue,
 		RegressionDelta:   m.RegDelta,
 		RegressionPassed:  m.RegPassed,
-	}, nil
+		// Vision-language fields propagate so the UI can render the
+		// per-field accuracy table, JSON validity rate, and ANLS score.
+		FieldMetrics:     m.FieldMetrics,
+		JSONValidRate:    m.JSONValidRate,
+		ANLS:             m.ANLS,
+		DocumentAccuracy: m.DocumentAccuracy,
+		BaselineFieldF1:  m.BaselineFieldF1,
+		MacroFieldF1:     m.MacroFieldF1,
+		DeltaFieldF1:     m.DeltaFieldF1,
+	}
 }
 
 // vramPreflight checks free GPU memory against the model's MinVRAMGB.
@@ -655,86 +702,11 @@ func (l *LocalTrainer) writeJobConfig(
 		"output_dir":   jobDir,
 	}
 
-	// Pass classifier hyperparameters through to the worker when present.
-	if job.Classifier != nil {
-		cfg["max_length"] = job.Classifier.MaxLength
-		cfg["multi_label"] = job.Classifier.MultiLabel
-		// Only pass class_weights when enabled: writing the Go zero value
-		// (false) would silently disable imbalance handling, whose Python
-		// default is on.
-		if job.Classifier.ClassWeights {
-			cfg["class_weights"] = true
-		}
-
-		cfg["epochs"] = job.Classifier.Epochs
-		cfg["learning_rate"] = job.Classifier.LearningRate
-		cfg["batch_size"] = job.Classifier.BatchSize
-		cfg["threshold"] = job.Classifier.Threshold
-	}
-
-	// Pass embedding hyperparameters through to the worker when present.
-	if job.Embedding != nil {
-		cfg["max_seq_len"] = job.Embedding.MaxSeqLen
-		cfg["loss"] = job.Embedding.Loss
-		// Only pass hard_negatives when explicitly enabled, since the
-		// Python default is off.
-		if job.Embedding.HardNegatives {
-			cfg["hard_negatives"] = true
-		}
-
-		if len(job.Embedding.Matryoshka) > 0 {
-			cfg["matryoshka"] = job.Embedding.Matryoshka
-		}
-
-		cfg["epochs"] = job.Embedding.Epochs
-		cfg["learning_rate"] = job.Embedding.LearningRate
-		cfg["batch_size"] = job.Embedding.BatchSize
-		cfg["grad_cache"] = job.Embedding.GradCache
-		cfg["normalize"] = job.Embedding.Normalize
-	}
-
-	// Pass reranker hyperparameters through to the worker when present.
-	if job.Reranker != nil {
-		cfg["max_seq_len"] = job.Reranker.MaxSeqLen
-		cfg["loss"] = job.Reranker.Loss
-		cfg["epochs"] = job.Reranker.Epochs
-		cfg["learning_rate"] = job.Reranker.LearningRate
-		cfg["batch_size"] = job.Reranker.BatchSize
-		cfg["grad_cache"] = job.Reranker.GradCache
-	}
-
-	// Pass NER (token_classifier) hyperparameters through to the worker when
-	// present.
-	if job.NER != nil {
-		cfg["max_length"] = job.NER.MaxLength
-		cfg["stride"] = job.NER.Stride
-
-		if job.NER.LabelScheme != "" {
-			cfg["label_scheme"] = job.NER.LabelScheme
-		}
-
-		cfg["epochs"] = job.NER.Epochs
-		cfg["learning_rate"] = job.NER.LearningRate
-		cfg["batch_size"] = job.NER.BatchSize
-	}
-
-	// Pass DPO/ORPO hyperparameters through to the worker when present, plus
-	// the parent SFT job's adapter directory: with LoRA, the reference model
-	// is the same base with the adapter disabled, so the trainer only needs
-	// the parent's adapter path, not a second copy of the base model.
-	if job.Preference != nil {
-		cfg["method"] = string(job.Preference.Method)
-		cfg["beta"] = job.Preference.Beta
-		cfg["learning_rate"] = job.Preference.LearningRate
-		cfg["epochs"] = job.Preference.Epochs
-		cfg["max_prompt_len"] = job.Preference.MaxPromptLen
-		cfg["max_len"] = job.Preference.MaxLen
-
-		if job.ParentJobID != "" && isSafeJobID(job.ParentJobID) {
-			cfg["parent_job_id"] = job.ParentJobID
-			cfg["parent_adapter_dir"] = filepath.Join(l.cfg.JobsDir, filepath.Base(job.ParentJobID), "adapter")
-		}
-	}
+	addClassifierConfig(cfg, job)
+	addEmbeddingConfig(cfg, job)
+	addRerankerConfig(cfg, job)
+	addNERConfig(cfg, job)
+	l.addPreferenceConfig(cfg, job)
 
 	// Track B: pass the task's JSON schema to the worker so the SFT eval can
 	// report a JSON validity rate.
@@ -742,12 +714,138 @@ func (l *LocalTrainer) writeJobConfig(
 		cfg["json_schema"] = job.JSONSchema
 	}
 
+	l.addVisionConfig(cfg, job)
+
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
 
 	return os.WriteFile(filepath.Join(jobDir, "config.json"), data, 0o600)
+}
+
+// addClassifierConfig passes classifier hyperparameters through to the
+// worker when present.
+func addClassifierConfig(cfg map[string]interface{}, job *domain.TrainingJob) {
+	if job.Classifier == nil {
+		return
+	}
+
+	cfg["max_length"] = job.Classifier.MaxLength
+	cfg["multi_label"] = job.Classifier.MultiLabel
+	// Only pass class_weights when enabled: writing the Go zero value
+	// (false) would silently disable imbalance handling, whose Python
+	// default is on.
+	if job.Classifier.ClassWeights {
+		cfg["class_weights"] = true
+	}
+
+	cfg["epochs"] = job.Classifier.Epochs
+	cfg["learning_rate"] = job.Classifier.LearningRate
+	cfg["batch_size"] = job.Classifier.BatchSize
+	cfg["threshold"] = job.Classifier.Threshold
+}
+
+// addEmbeddingConfig passes embedding hyperparameters through to the worker
+// when present.
+func addEmbeddingConfig(cfg map[string]interface{}, job *domain.TrainingJob) {
+	if job.Embedding == nil {
+		return
+	}
+
+	cfg["max_seq_len"] = job.Embedding.MaxSeqLen
+	cfg["loss"] = job.Embedding.Loss
+	// Only pass hard_negatives when explicitly enabled, since the Python
+	// default is off.
+	if job.Embedding.HardNegatives {
+		cfg["hard_negatives"] = true
+	}
+
+	if len(job.Embedding.Matryoshka) > 0 {
+		cfg["matryoshka"] = job.Embedding.Matryoshka
+	}
+
+	cfg["epochs"] = job.Embedding.Epochs
+	cfg["learning_rate"] = job.Embedding.LearningRate
+	cfg["batch_size"] = job.Embedding.BatchSize
+	cfg["grad_cache"] = job.Embedding.GradCache
+	cfg["normalize"] = job.Embedding.Normalize
+}
+
+// addRerankerConfig passes reranker hyperparameters through to the worker
+// when present.
+func addRerankerConfig(cfg map[string]interface{}, job *domain.TrainingJob) {
+	if job.Reranker == nil {
+		return
+	}
+
+	cfg["max_seq_len"] = job.Reranker.MaxSeqLen
+	cfg["loss"] = job.Reranker.Loss
+	cfg["epochs"] = job.Reranker.Epochs
+	cfg["learning_rate"] = job.Reranker.LearningRate
+	cfg["batch_size"] = job.Reranker.BatchSize
+	cfg["grad_cache"] = job.Reranker.GradCache
+}
+
+// addNERConfig passes NER (token_classifier) hyperparameters through to the
+// worker when present.
+func addNERConfig(cfg map[string]interface{}, job *domain.TrainingJob) {
+	if job.NER == nil {
+		return
+	}
+
+	cfg["max_length"] = job.NER.MaxLength
+	cfg["stride"] = job.NER.Stride
+
+	if job.NER.LabelScheme != "" {
+		cfg["label_scheme"] = job.NER.LabelScheme
+	}
+
+	cfg["epochs"] = job.NER.Epochs
+	cfg["learning_rate"] = job.NER.LearningRate
+	cfg["batch_size"] = job.NER.BatchSize
+}
+
+// addPreferenceConfig passes DPO/ORPO hyperparameters through to the worker
+// when present, plus the parent SFT job's adapter directory: with LoRA, the
+// reference model is the same base with the adapter disabled, so the
+// trainer only needs the parent's adapter path, not a second copy of the
+// base model.
+func (l *LocalTrainer) addPreferenceConfig(cfg map[string]interface{}, job *domain.TrainingJob) {
+	if job.Preference == nil {
+		return
+	}
+
+	cfg["method"] = string(job.Preference.Method)
+	cfg["beta"] = job.Preference.Beta
+	cfg["learning_rate"] = job.Preference.LearningRate
+	cfg["epochs"] = job.Preference.Epochs
+	cfg["max_prompt_len"] = job.Preference.MaxPromptLen
+	cfg["max_len"] = job.Preference.MaxLen
+
+	if job.ParentJobID != "" && isSafeJobID(job.ParentJobID) {
+		cfg["parent_job_id"] = job.ParentJobID
+		cfg["parent_adapter_dir"] = filepath.Join(l.cfg.JobsDir, filepath.Base(job.ParentJobID), "adapter")
+	}
+}
+
+// addVisionConfig passes vision_lm hyperparameters through to the worker,
+// plus the images directory the blob store materialized this task's example
+// images under, so the trainer can resolve each example's "image" payload
+// field (a blob key) to an actual file path.
+func (l *LocalTrainer) addVisionConfig(cfg map[string]interface{}, job *domain.TrainingJob) {
+	if job.Vision == nil {
+		return
+	}
+
+	cfg["images_dir"] = filepath.Join(l.cfg.BlobRoot, filepath.Base(job.TaskID))
+	cfg["max_image_side"] = job.Vision.MaxImageSide
+	cfg["max_new_tokens"] = job.Vision.MaxNewTokens
+	cfg["freeze_vision_encoder"] = job.Vision.FreezeVision()
+	cfg["epochs"] = job.Vision.Epochs
+	cfg["learning_rate"] = job.Vision.LearningRate
+	cfg["batch_size"] = job.Vision.BatchSize
+	cfg["gradient_accumulation_steps"] = job.Vision.GradientAccumulationSteps
 }
 
 // writeDataset writes the JSONL dataset file.

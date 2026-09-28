@@ -70,7 +70,7 @@ func (u *TaskUsecase) GetTask(id string) (*domain.Task, error) {
 // description, label set, JSON schema). Nil pointers leave a field unchanged.
 // The label set is used to validate NER span labels; the JSON schema
 // constrains Track B (extraction) outputs.
-func (u *TaskUsecase) UpdateTask(id string, name, description *string, labelSet *[]string, jsonSchema *string) (*domain.Task, error) {
+func (u *TaskUsecase) UpdateTask(id string, name, description *string, labelSet *[]string, jsonSchema *string, retentionDays ...*int) (*domain.Task, error) {
 	t, err := u.tasks.Get(id)
 	if err != nil {
 		return nil, err
@@ -112,6 +112,15 @@ func (u *TaskUsecase) UpdateTask(id string, name, description *string, labelSet 
 		}
 
 		t.JSONSchema = schema
+	}
+
+	if len(retentionDays) > 0 && retentionDays[0] != nil {
+		days := *retentionDays[0]
+		if days < 0 {
+			return nil, domain.ErrInvalidInput
+		}
+
+		t.RetentionDays = days
 	}
 
 	t.UpdatedAt = time.Now().UTC()

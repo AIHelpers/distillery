@@ -5,13 +5,33 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
-// GGUF_MAGIC is the 4-byte GGUF file magic header.
-var GGUF_MAGIC = []byte{'G', 'G', 'U', 'F'}
+// GGUFMagic is the 4-byte GGUF file magic header.
+var GGUFMagic = []byte{'G', 'G', 'U', 'F'}
+
+// Sentinel errors for GGUF parsing failures. Each is wrapped with the
+// specific detail (file name, offending value, limit) at its call site.
+var (
+	errGGUFTypeOutOfRange   = errors.New("GGUF value type out of range")
+	errGGUFTruncated        = errors.New("GGUF metadata is truncated")
+	errGGUFStringLen        = errors.New("GGUF string length is implausible")
+	errGGUFBadMagic         = errors.New("not a valid GGUF (bad magic)")
+	errGGUFKVCount          = errors.New("GGUF metadata count is implausible")
+	errGGUFArrayElemType    = errors.New("GGUF array element type unsupported")
+	errGGUFArrayTooLarge    = errors.New("GGUF array value too large")
+	errGGUFValueType        = errors.New("GGUF value type unsupported")
+	errGGUFMetadataTooLarge = errors.New("GGUF metadata section too large")
+
+	// ErrIncompleteGGUF is returned by ValidateGGUFCompleteness when a GGUF
+	// has architecture/weights metadata but no tokenizer keys, meaning
+	// llama.cpp / HomeBred-LLM would be unable to tokenize prompts for it.
+	ErrIncompleteGGUF = errors.New("incomplete GGUF export")
+)
 
 // GGUFValueType enum per the GGUF spec.
 //
@@ -50,6 +70,18 @@ var ggufValueSizes = map[byte]int{
 	ggufTypeFloat64: 8,
 }
 
+// ggufType narrows a raw u32 GGUF type tag read from the file to the byte
+// range ggufValueSizes and the switch statements below key on. A value
+// outside 0-255 is not a truncation risk here — it's proof the file is
+// corrupt or hostile, so it's rejected rather than silently wrapped.
+func ggufType(name string, raw uint32) (byte, error) {
+	if raw > math.MaxUint8 {
+		return 0, fmt.Errorf("%s: %w: %d", name, errGGUFTypeOutOfRange, raw)
+	}
+
+	return byte(raw), nil
+}
+
 // ggufStringLenLimit caps a single metadata string length to guard against
 // corrupt/truncated files claiming absurd lengths. 64 MB is generous for
 // real GGUF metadata keys/values.
@@ -80,90 +112,251 @@ func GGUFMetadataKeys(ggufPath string) ([]string, error) {
 	return ggufMetadataKeysReader(f, filepath.Base(ggufPath))
 }
 
-// ggufMetadataKeysReader is the io.Reader-based implementation shared by
-// GGUFMetadataKeys and the tests (which feed in-memory buffers).
-func ggufMetadataKeysReader(r io.Reader, name string) ([]string, error) {
-	// Helper: read exactly n bytes from the reader.
-	readExact := func(n int) ([]byte, error) {
-		buf := make([]byte, n)
-		if _, err := io.ReadFull(r, buf); err != nil {
-			if err == io.EOF || errors.Is(err, io.ErrUnexpectedEOF) {
-				return nil, fmt.Errorf("%s: GGUF metadata is truncated", name)
-			}
+// ggufReader wraps an io.Reader with the little-endian primitive readers the
+// GGUF metadata format needs, tagging every error with the file name.
+type ggufReader struct {
+	r    io.Reader
+	name string
+}
 
-			return nil, fmt.Errorf("%s: reading GGUF: %w", name, err)
-		}
+// readExact reads exactly n bytes from the reader.
+func (g *ggufReader) readExact(n int) ([]byte, error) {
+	buf := make([]byte, n)
 
-		return buf, nil
-	}
-
-	// Read a u64 (GGUF stores counts as little-endian uint64).
-	readU64 := func() (uint64, error) {
-		buf, err := readExact(8)
-		if err != nil {
-			return 0, err
-		}
-
-		return binary.LittleEndian.Uint64(buf), nil
-	}
-
-	// Read a u32 (GGUF stores value types as little-endian uint32).
-	readU32 := func() (uint32, error) {
-		buf, err := readExact(4)
-		if err != nil {
-			return 0, err
-		}
-
-		return binary.LittleEndian.Uint32(buf), nil
-	}
-
-	// Read a length-prefixed string.
-	readStr := func() (string, error) {
-		n, err := readU64()
-		if err != nil {
-			return "", err
-		}
-
-		if n > ggufStringLenLimit {
-			return "", fmt.Errorf("%s: GGUF string length %d is implausible", name, n)
-		}
-
-		buf, err := readExact(int(n))
-		if err != nil {
-			return "", err
-		}
-
-		return string(buf), nil
-	}
-
-	// --- Header ---.
-	magic, err := readExact(4)
+	_, err := io.ReadFull(g.r, buf)
 	if err != nil {
-		return nil, err
+		if err == io.EOF || errors.Is(err, io.ErrUnexpectedEOF) {
+			return nil, fmt.Errorf("%s: %w", g.name, errGGUFTruncated)
+		}
+
+		return nil, fmt.Errorf("%s: reading GGUF: %w", g.name, err)
+	}
+
+	return buf, nil
+}
+
+// readU64 reads a u64 (GGUF stores counts as little-endian uint64).
+func (g *ggufReader) readU64() (uint64, error) {
+	buf, err := g.readExact(8)
+	if err != nil {
+		return 0, err
+	}
+
+	return binary.LittleEndian.Uint64(buf), nil
+}
+
+// readU32 reads a u32 (GGUF stores value types as little-endian uint32).
+func (g *ggufReader) readU32() (uint32, error) {
+	buf, err := g.readExact(4)
+	if err != nil {
+		return 0, err
+	}
+
+	return binary.LittleEndian.Uint32(buf), nil
+}
+
+// readStr reads a length-prefixed string.
+func (g *ggufReader) readStr() (string, error) {
+	n, err := g.readU64()
+	if err != nil {
+		return "", err
+	}
+
+	if n > ggufStringLenLimit {
+		return "", fmt.Errorf("%s: %w: %d", g.name, errGGUFStringLen, n)
+	}
+
+	buf, err := g.readExact(int(n))
+	if err != nil {
+		return "", err
+	}
+
+	return string(buf), nil
+}
+
+// readHeader validates the GGUF magic/version and returns the declared
+// metadata KV count (n_kv), having already validated it against
+// ggufMaxKVCount.
+func (g *ggufReader) readHeader() (nKV uint64, err error) {
+	magic, err := g.readExact(4)
+	if err != nil {
+		return 0, err
 	}
 
 	if string(magic) != "GGUF" {
-		return nil, fmt.Errorf("%s: not a valid GGUF (bad magic %q)", name, magic)
+		return 0, fmt.Errorf("%s: %w: %q", g.name, errGGUFBadMagic, magic)
 	}
 
 	// Version (u32) — we don't need it, just validate it's readable.
-	if _, err := readExact(4); err != nil {
-		return nil, err
+	_, err = g.readExact(4)
+	if err != nil {
+		return 0, err
 	}
 
 	// n_tensors (u64) — metadata only; we don't walk tensor info.
-	if _, err := readU64(); err != nil {
-		return nil, err
+	_, err = g.readU64()
+	if err != nil {
+		return 0, err
 	}
 
-	// n_kv (u64).
-	nKV, err := readU64()
+	nKV, err = g.readU64()
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 
 	if nKV > ggufMaxKVCount {
-		return nil, fmt.Errorf("%s: GGUF metadata count %d is implausible", name, nKV)
+		return 0, fmt.Errorf("%s: %w: %d", g.name, errGGUFKVCount, nKV)
+	}
+
+	return nKV, nil
+}
+
+// skipArrayPayload discards a raw fixed-width array payload of the given
+// total byte size in bounded chunks, without buffering it all in memory.
+func (g *ggufReader) skipArrayPayload(total uint64) error {
+	remaining := total
+	for remaining > 0 {
+		chunk := remaining
+		if chunk > 4*1024*1024 {
+			chunk = 4 * 1024 * 1024
+		}
+
+		_, err := g.readExact(int(chunk))
+		if err != nil {
+			return err
+		}
+
+		remaining -= chunk
+	}
+
+	return nil
+}
+
+// readArrayValue reads a GGUF array value ([elem_type:u32][n_elem:u64]
+// [elems...]), discarding the elements themselves, and returns its total
+// encoded byte size (for the caller's cumulative-size accounting).
+func (g *ggufReader) readArrayValue() (size uint64, err error) {
+	elemTypeVal, err := g.readU32()
+	if err != nil {
+		return 0, err
+	}
+
+	elemType, err := ggufType(g.name, elemTypeVal)
+	if err != nil {
+		return 0, err
+	}
+
+	nElem, err := g.readU64()
+	if err != nil {
+		return 0, err
+	}
+
+	size = 1 + 8
+
+	if elemType == ggufTypeString {
+		// Array of strings.
+		for range nElem {
+			s, err := g.readStr()
+			if err != nil {
+				return 0, err
+			}
+
+			size += uint64(len(s)) + 8
+		}
+
+		return size, nil
+	}
+
+	elemSize, ok := ggufValueSizes[elemType]
+	if !ok {
+		return 0, fmt.Errorf("%s: %w: %d", g.name, errGGUFArrayElemType, elemType)
+	}
+
+	total := nElem * uint64(elemSize)
+	if total > ggufMaxKVBytes {
+		return 0, fmt.Errorf("%s: %w (%d bytes)", g.name, errGGUFArrayTooLarge, total)
+	}
+
+	if total > 0 {
+		err = g.skipArrayPayload(total)
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	return size + total, nil
+}
+
+// readValue reads (or, for arrays, discards) a single GGUF metadata value of
+// the given type and returns its total encoded byte size.
+func (g *ggufReader) readValue(vType byte) (size uint64, err error) {
+	switch vType {
+	case ggufTypeString:
+		val, err := g.readStr()
+		if err != nil {
+			return 0, err
+		}
+
+		return uint64(len(val)) + 8, nil
+
+	case ggufTypeArray:
+		return g.readArrayValue()
+
+	default:
+		fixedSize, ok := ggufValueSizes[vType]
+		if !ok {
+			return 0, fmt.Errorf("%s: %w: %d", g.name, errGGUFValueType, vType)
+		}
+
+		_, err = g.readExact(fixedSize)
+		if err != nil {
+			return 0, err
+		}
+
+		return uint64(fixedSize), nil
+	}
+}
+
+// readEntry reads one metadata KV entry (key + typed value) and returns the
+// key name plus the entry's total encoded byte size (key + value).
+func (g *ggufReader) readEntry() (key string, size uint64, err error) {
+	key, err = g.readStr()
+	if err != nil {
+		return "", 0, err
+	}
+
+	size = uint64(len(key)) + 8 // key bytes + length prefix.
+
+	// Value type (u32 — per the GGUF spec, value types are stored as 4-byte
+	// uint32, matching what llama.cpp and the python gguf writer emit).
+	// Reading only 1 byte here desyncs the parser by 3 bytes and mis-reads
+	// the next string length (e.g. a bogus 83886080).
+	vTypeVal, err := g.readU32()
+	if err != nil {
+		return "", 0, err
+	}
+
+	vType, err := ggufType(g.name, vTypeVal)
+	if err != nil {
+		return "", 0, err
+	}
+
+	valSize, err := g.readValue(vType)
+	if err != nil {
+		return "", 0, err
+	}
+
+	return key, size + valSize, nil
+}
+
+// ggufMetadataKeysReader is the io.Reader-based implementation underlying
+// GGUFMetadataKeys.
+func ggufMetadataKeysReader(r io.Reader, name string) ([]string, error) {
+	g := &ggufReader{r: r, name: name}
+
+	nKV, err := g.readHeader()
+	if err != nil {
+		return nil, err
 	}
 
 	// --- Metadata KV section ---.
@@ -171,106 +364,16 @@ func ggufMetadataKeysReader(r io.Reader, name string) ([]string, error) {
 	cumulativeBytes := uint64(0)
 
 	for range nKV {
-		key, err := readStr()
+		key, entrySize, err := g.readEntry()
 		if err != nil {
 			return nil, err
 		}
 
 		keys = append(keys, key)
-		cumulativeBytes += uint64(len(key)) + 8 // key bytes + length prefix.
-
-		// Value type (u32 — per the GGUF spec, value types are stored as
-		// 4-byte uint32, matching what llama.cpp and the python gguf writer
-		// emit). Reading only 1 byte here desyncs the parser by 3 bytes and
-		// mis-reads the next string length (e.g. a bogus 83886080).
-		vTypeVal, err := readU32()
-		if err != nil {
-			return nil, err
-		}
-
-		vType := byte(vTypeVal)
-
-		switch vType {
-		case ggufTypeString:
-			val, err := readStr()
-			if err != nil {
-				return nil, err
-			}
-
-			cumulativeBytes += uint64(len(val)) + 8
-
-		case ggufTypeArray:
-			// Array: [elem_type:u32][n_elem:u64][elems...].
-			elemTypeVal, err := readU32()
-			if err != nil {
-				return nil, err
-			}
-
-			elemType := byte(elemTypeVal)
-
-			nElem, err := readU64()
-			if err != nil {
-				return nil, err
-			}
-
-			cumulativeBytes += 1 + 8
-
-			if elemType == ggufTypeString {
-				// Array of strings.
-				for range nElem {
-					s, err := readStr()
-					if err != nil {
-						return nil, err
-					}
-
-					cumulativeBytes += uint64(len(s)) + 8
-				}
-			} else {
-				elemSize, ok := ggufValueSizes[elemType]
-				if !ok {
-					return nil, fmt.Errorf("%s: GGUF array element type %d unsupported", name, elemType)
-				}
-
-				total := nElem * uint64(elemSize)
-				if total > ggufMaxKVBytes {
-					return nil, fmt.Errorf("%s: GGUF array value too large (%d bytes)", name, total)
-				}
-
-				if total > 0 {
-					// Skip over the raw array payload in bounded chunks.
-					remaining := total
-					for remaining > 0 {
-						chunk := remaining
-						if chunk > 4*1024*1024 {
-							chunk = 4 * 1024 * 1024
-						}
-
-						if _, err := readExact(int(chunk)); err != nil {
-							return nil, err
-						}
-
-						remaining -= chunk
-					}
-				}
-
-				cumulativeBytes += total
-			}
-
-		default:
-			size, ok := ggufValueSizes[vType]
-			if !ok {
-				return nil, fmt.Errorf("%s: GGUF value type %d unsupported", name, vType)
-			}
-
-			if _, err := readExact(size); err != nil {
-				return nil, err
-			}
-
-			cumulativeBytes += uint64(size)
-		}
+		cumulativeBytes += entrySize
 
 		if cumulativeBytes > ggufMaxKVBytes {
-			return nil, fmt.Errorf("%s: GGUF metadata section too large (%d bytes)", name, cumulativeBytes)
+			return nil, fmt.Errorf("%s: %w (%d bytes)", name, errGGUFMetadataTooLarge, cumulativeBytes)
 		}
 	}
 
@@ -305,14 +408,15 @@ func ValidateGGUFCompleteness(ggufPath string) error {
 
 	if !GGUFHasTokenizerKeys(keys) {
 		return fmt.Errorf(
-			"%s is an incomplete GGUF export: it has %d metadata keys for "+
+			"%s: %w: it has %d metadata keys for "+
 				"architecture/weights but zero tokenizer keys. "+
 				"llama.cpp / HomeBred-LLM cannot tokenize prompts without "+
 				"tokenizer metadata, so the file would be unloadable at "+
 				"inference time. Ensure the training job saved its tokenizer "+
 				"(tokenizer.json / tokenizer.model) alongside the model "+
-				"weights, then re-run the export.",
+				"weights, then re-run the export",
 			filepath.Base(ggufPath),
+			ErrIncompleteGGUF,
 			len(keys),
 		)
 	}

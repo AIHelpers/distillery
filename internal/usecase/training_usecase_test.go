@@ -458,3 +458,82 @@ func TestTrainingUsecase_LatestCompleted_RepoError(t *testing.T) {
 		t.Errorf("expected errRepoFailure, got %v", err)
 	}
 }
+
+// --- StartTraining: vision_lm default hyperparameters ---.
+//
+// startTraining seeds job.Vision with default hyperparameters when
+// kind == domain.KindVisionLM (training_usecase.go), mirroring the existing
+// KindTokenClassifier -> job.NER seeding. Neither branch had a test before
+// this feature; this covers the new vision one.
+
+func TestTrainingUsecase_StartTraining_VisionLM_SeedsDefaultConfig(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Kind: domain.KindVisionLM, Type: domain.TaskExtraction, Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
+	examples := &mockExampleRepo{
+		byTask: []*domain.Example{
+			{ID: "e1", Kind: domain.KindVisionLM, Source: domain.SourceUser},
+			{ID: "e2", Kind: domain.KindVisionLM, Source: domain.SourceUser},
+			{ID: "e3", Kind: domain.KindVisionLM, Source: domain.SourceUser},
+		},
+	}
+	jobs := &mockTrainingRepo{}
+	selector := &mockModelSelector{model: domain.BaseModel{Name: "qwen2-vl-2b", ParamsBillions: 2, Family: ""}}
+	uc := newTrainingUsecase(tasks, examples, jobs, selector, &mockFineTuner{})
+
+	job, err := uc.StartTraining("task_1")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if job.Kind != domain.KindVisionLM {
+		t.Fatalf("expected job kind vision_lm, got %v", job.Kind)
+	}
+
+	if job.Vision == nil {
+		t.Fatal("expected job.Vision to be seeded with defaults")
+	}
+
+	if job.Vision.MaxImageSide != 1280 {
+		t.Errorf("expected default MaxImageSide 1280, got %d", job.Vision.MaxImageSide)
+	}
+
+	if job.Vision.MaxNewTokens != 256 {
+		t.Errorf("expected default MaxNewTokens 256, got %d", job.Vision.MaxNewTokens)
+	}
+
+	if job.Vision.FreezeVisionEncoder == nil || !*job.Vision.FreezeVisionEncoder {
+		t.Error("expected FreezeVisionEncoder to default to true")
+	}
+
+	if job.NER != nil {
+		t.Error("expected job.NER to stay nil for a vision_lm job")
+	}
+}
+
+func TestTrainingUsecase_StartTraining_VisionLM_OnlyFeedsVisionExamples(t *testing.T) {
+	t.Parallel()
+
+	tasks := &mockTaskRepo{task: &domain.Task{ID: "task_1", Kind: domain.KindVisionLM, Type: domain.TaskExtraction, Name: "", Description: "", CreatedAt: time.Time{}, UpdatedAt: time.Time{}}}
+	examples := &mockExampleRepo{
+		byTask: []*domain.Example{
+			{ID: "e1", Kind: domain.KindVisionLM, Source: domain.SourceUser},
+			{ID: "e2", Kind: domain.KindVisionLM, Source: domain.SourceUser},
+			{ID: "e3", Kind: domain.KindVisionLM, Source: domain.SourceUser},
+			{ID: "e4", Kind: domain.KindPreferenceLM, Source: domain.SourceUser}, // different kind, shares the task: must be excluded.
+		},
+	}
+	jobs := &mockTrainingRepo{}
+	selector := &mockModelSelector{model: domain.BaseModel{Name: "qwen2-vl-2b", ParamsBillions: 2, Family: ""}}
+	tuner := &mockFineTuner{}
+	uc := newTrainingUsecase(tasks, examples, jobs, selector, tuner)
+
+	_, err := uc.StartTraining("task_1")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if len(tuner.examples) != 3 {
+		t.Errorf("expected 3 vision_lm examples passed to tuner (preference_lm excluded), got %d", len(tuner.examples))
+	}
+}

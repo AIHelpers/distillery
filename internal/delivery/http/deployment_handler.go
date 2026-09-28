@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,6 +15,13 @@ import (
 	"distillery/internal/domain"
 	"distillery/internal/usecase"
 )
+
+// validGGUFQuantizations lists the quantization schemes the GGUF converter
+// accepts, matching llama.cpp's naming.
+var validGGUFQuantizations = []string{
+	"q2_k", "q3_k_s", "q3_k_m", "q3_k_l", "q4_0", "q4_1", "q4_k_s", "q4_k_m",
+	"q5_0", "q5_1", "q5_k_s", "q5_k_m", "q6_k", "q8_0", "f16", "f32",
+}
 
 type DeploymentHandler struct {
 	uc *usecase.DeploymentUsecase
@@ -92,19 +100,28 @@ func (h *DeploymentHandler) Stop(w http.ResponseWriter, _ *http.Request, deploym
 }
 
 func (h *DeploymentHandler) Invoke(w http.ResponseWriter, r *http.Request, deploymentID string) {
-	var req invokeRequest
-
-	err := decodeJSON(r, &req)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-
 	// Kind-aware dispatch: seq_classifier and token_classifier deployments
-	// return structured results, everything else returns text + confidence.
+	// return structured results, vision_lm accepts a multipart image instead
+	// of a JSON body, everything else returns text + confidence.
 	kind, err := h.uc.DeploymentKind(deploymentID)
 	if err != nil {
 		handleErr(w, err)
+		return
+	}
+
+	// Vision deployments are served over multipart (per the plan's
+	// `POST /predict (multipart: file=@invoice.png, prompt="...")`
+	// contract) rather than the JSON body every other kind uses here.
+	if kind == domain.KindVisionLM {
+		h.invokeVision(w, r, deploymentID)
+		return
+	}
+
+	var req invokeRequest
+
+	err = decodeJSON(r, &req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
 
@@ -136,6 +153,11 @@ func (h *DeploymentHandler) Invoke(w http.ResponseWriter, r *http.Request, deplo
 		})
 
 		return
+
+	default:
+		// causal_lm, embedding, reranker, preference_lm: all handled by the
+		// shared "structured" path below (vision_lm was already dispatched
+		// to invokeVision earlier in this function).
 	}
 
 	// Track B: for causal_lm/extraction deployments the task may declare a
@@ -160,6 +182,9 @@ func (h *DeploymentHandler) Invoke(w http.ResponseWriter, r *http.Request, deplo
 
 	writeJSON(w, http.StatusOK, resp)
 }
+
+// maxVisionUploadBytes caps a single /predict image upload (20MB).
+const maxVisionUploadBytes = 20 << 20
 
 // Embed serves the deployed embedding model. POST /inference/{id}/embed.
 func (h *DeploymentHandler) Embed(w http.ResponseWriter, r *http.Request, deploymentID string) {
@@ -302,7 +327,7 @@ func ggufQuantization(r *http.Request) string {
 		// Validate against known quantizations; fall back to default on bad input.
 		ok := false
 
-		for _, valid := range []string{"q2_k", "q3_k_s", "q3_k_m", "q3_k_l", "q4_0", "q4_1", "q4_k_s", "q4_k_m", "q5_0", "q5_1", "q5_k_s", "q5_k_m", "q6_k", "q8_0", "f16", "f32"} {
+		for _, valid := range validGGUFQuantizations {
 			if strings.EqualFold(q, valid) {
 				ok = true
 				break
@@ -315,33 +340,6 @@ func ggufQuantization(r *http.Request) string {
 	}
 
 	return defaultGGUFQuantization
-}
-
-// serveGGUF handles the common GGUF attachment response path. When jobID is
-// empty, the latest completed job for the task is used.
-func (h *DeploymentHandler) serveGGUF(w http.ResponseWriter, taskID, jobID, quantization string) {
-	opts := domain.GGUFExportOptions{Quantization: quantization}
-
-	var (
-		data     []byte
-		filename string
-		err      error
-	)
-
-	if jobID == "" {
-		data, filename, err = h.uc.ExportGGUF(taskID, opts)
-	} else {
-		data, filename, err = h.uc.ExportGGUFVersion(taskID, jobID, opts)
-	}
-
-	if err != nil {
-		handleErr(w, err)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
-	_, _ = w.Write(data)
 }
 
 // StartGGUFAsync starts an async GGUF conversion and returns the session ID
@@ -413,6 +411,87 @@ func (h *DeploymentHandler) DownloadGGUF(w http.ResponseWriter, r *http.Request,
 
 	// Clean up the GGUF file and session now that it has been streamed.
 	h.uc.CleanupGGUFSession(sessionID)
+}
+
+// invokeVision handles POST /inference/{id}/predict for a vision_lm
+// deployment: multipart form with an image file field ("file", "image", or
+// "file0") and a "prompt" field, returning
+// {"kind":"vision_lm","result":{"text":...,"json":...,"json_valid":...}}.
+func (h *DeploymentHandler) invokeVision(w http.ResponseWriter, r *http.Request, deploymentID string) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxVisionUploadBytes)
+
+	err := r.ParseMultipartForm(maxVisionUploadBytes)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "expected a multipart/form-data body with an image file and a \"prompt\" field")
+		return
+	}
+
+	var (
+		file   multipart.File
+		header *multipart.FileHeader
+	)
+
+	for _, field := range []string{"file", "image", "file0"} {
+		file, header, err = r.FormFile(field)
+		if err == nil {
+			break
+		}
+	}
+
+	if file == nil {
+		writeError(w, http.StatusBadRequest, "no image file found (expected form field \"file\")")
+		return
+	}
+
+	defer file.Close()
+
+	_ = header
+
+	data, err := io.ReadAll(io.LimitReader(file, maxVisionUploadBytes+1))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read uploaded image")
+		return
+	}
+
+	prompt := r.FormValue("prompt")
+
+	pred, err := h.uc.InvokeVision(deploymentID, apiKeyFromRequest(r), data, prompt)
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"kind":   "vision_lm",
+		"result": pred,
+	})
+}
+
+// serveGGUF handles the common GGUF attachment response path. When jobID is
+// empty, the latest completed job for the task is used.
+func (h *DeploymentHandler) serveGGUF(w http.ResponseWriter, taskID, jobID, quantization string) {
+	opts := domain.GGUFExportOptions{Quantization: quantization}
+
+	var (
+		data     []byte
+		filename string
+		err      error
+	)
+
+	if jobID == "" {
+		data, filename, err = h.uc.ExportGGUF(taskID, opts)
+	} else {
+		data, filename, err = h.uc.ExportGGUFVersion(taskID, jobID, opts)
+	}
+
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
+	_, _ = w.Write(data)
 }
 
 // generateGGUFSessionID generates a unique session ID for a GGUF conversion.

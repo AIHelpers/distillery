@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -27,6 +28,17 @@ import (
 	"distillery/internal/infra/simulation"
 	localtraining "distillery/internal/infra/training"
 )
+
+// ErrGGUFNotFound is returned when a job directory has no GGUF file to serve.
+var ErrGGUFNotFound = errors.New("GGUF not found for job")
+
+// ErrServerNotHealthy is returned when llama-server doesn't answer its
+// health check before StartupTimeout elapses.
+var ErrServerNotHealthy = errors.New("llama-server did not become healthy in time")
+
+// ErrServerStatus is returned when llama-server's HTTP API responds with a
+// non-200 status; the status code and body are wrapped alongside it.
+var ErrServerStatus = errors.New("llama-server returned an error status")
 
 // LlamacppConfig controls the llama.cpp inference backend.
 type LlamacppConfig struct {
@@ -59,7 +71,8 @@ func (c *LlamacppConfig) withDefaults() {
 	}
 
 	if c.Backend == "" {
-		if v := os.Getenv("INFERENCE_BACKEND"); v != "" {
+		v := os.Getenv("INFERENCE_BACKEND")
+		if v != "" {
 			c.Backend = v
 		} else {
 			c.Backend = "simulation"
@@ -154,8 +167,10 @@ func (e *LlamacppEngine) Predict(
 
 		_ = e.killServer(job.ID)
 
-		if p, rErr := e.ensureServer(job.ID, ggufPath); rErr == nil {
-			if out, rErr := e.completion(p.port, input, ""); rErr == nil {
+		p, rErr := e.ensureServer(job.ID, ggufPath)
+		if rErr == nil {
+			out, rErr := e.completion(p.port, input, "")
+			if rErr == nil {
 				return out, 0.95
 			}
 		}
@@ -198,8 +213,10 @@ func (e *LlamacppEngine) PredictConstrained(
 
 		_ = e.killServer(job.ID)
 
-		if p, rErr := e.ensureServer(job.ID, ggufPath); rErr == nil {
-			if out, rErr := e.completion(p.port, input, grammar); rErr == nil {
+		p, rErr := e.ensureServer(job.ID, ggufPath)
+		if rErr == nil {
+			out, rErr := e.completion(p.port, input, grammar)
+			if rErr == nil {
 				return out, 0.95
 			}
 		}
@@ -255,11 +272,12 @@ func (e *LlamacppEngine) resolveGGUF(jobID string) (string, error) {
 
 	path := filepath.Join(jobDir, name)
 	if !localtraining.FileExists(path) {
-		return "", fmt.Errorf("GGUF %q not found for job %s", name, jobID)
+		return "", fmt.Errorf("%w %q (job %s)", ErrGGUFNotFound, name, jobID)
 	}
 
 	// Completeness gate: refuse to serve an incomplete GGUF (no tokenizer).
-	if err := localtraining.ValidateGGUFCompleteness(path); err != nil {
+	err = localtraining.ValidateGGUFCompleteness(path)
+	if err != nil {
 		return "", err
 	}
 
@@ -271,7 +289,8 @@ func (e *LlamacppEngine) ensureServer(jobID, ggufPath string) (*serverProc, erro
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if p, ok := e.servers[jobID]; ok {
+	p, ok := e.servers[jobID]
+	if ok {
 		if e.isAlive(p) {
 			return p, nil
 		}
@@ -285,7 +304,11 @@ func (e *LlamacppEngine) ensureServer(jobID, ggufPath string) (*serverProc, erro
 		return nil, err
 	}
 
-	cmd := exec.Command(
+	// The server process outlives this call (it's kept in e.servers and
+	// reused across requests), so it is intentionally not tied to any
+	// single request's context.
+	cmd := exec.CommandContext(
+		context.Background(),
 		e.cfg.Bin,
 		"--model", ggufPath,
 		"--host", e.cfg.Host,
@@ -343,31 +366,34 @@ func (e *LlamacppEngine) ensureServer(jobID, ggufPath string) (*serverProc, erro
 
 // waitHealthy polls the llama-server /health endpoint until it responds.
 func (e *LlamacppEngine) waitHealthy(port int, timeout time.Duration) error {
-	url := fmt.Sprintf("http://%s:%d/health", e.cfg.Host, port)
+	url := fmt.Sprintf("http://%s/health", net.JoinHostPort(e.cfg.Host, strconv.Itoa(port)))
 
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		resp, err := e.client.Get(url)
-		if err == nil {
-			_, _ = io.Copy(io.Discard, resp.Body)
-			_ = resp.Body.Close()
+		req, reqErr := http.NewRequestWithContext(context.Background(), http.MethodGet, url, http.NoBody)
+		if reqErr == nil {
+			resp, err := e.client.Do(req)
+			if err == nil {
+				_, _ = io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
 
-			if resp.StatusCode == http.StatusOK {
-				return nil
+				if resp.StatusCode == http.StatusOK {
+					return nil
+				}
 			}
 		}
 
 		time.Sleep(500 * time.Millisecond)
 	}
 
-	return fmt.Errorf("llama-server at %s did not become healthy within %s", url, timeout)
+	return fmt.Errorf("%w: %s did not respond within %s", ErrServerNotHealthy, url, timeout)
 }
 
 // completion calls the llama.cpp /completion endpoint with the input prompt.
 // When grammar is non-empty it is passed as llama-server's GBNF `grammar`
 // parameter, constraining decoding to schema-valid JSON.
 func (e *LlamacppEngine) completion(port int, input, grammar string) (string, error) {
-	url := fmt.Sprintf("http://%s:%d/completion", e.cfg.Host, port)
+	url := fmt.Sprintf("http://%s/completion", net.JoinHostPort(e.cfg.Host, strconv.Itoa(port)))
 
 	payload := map[string]any{
 		"prompt":       input,
@@ -406,13 +432,15 @@ func (e *LlamacppEngine) completion(port int, input, grammar string) (string, er
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return "", fmt.Errorf("llama-server status %d: %s", resp.StatusCode, string(b))
+		return "", fmt.Errorf("%w: %d: %s", ErrServerStatus, resp.StatusCode, string(b))
 	}
 
 	var out struct {
 		Content string `json:"content"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+
+	err = json.NewDecoder(resp.Body).Decode(&out)
+	if err != nil {
 		return "", err
 	}
 
@@ -462,14 +490,17 @@ func (e *LlamacppEngine) recordErr(jobID string, err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if p, ok := e.servers[jobID]; ok {
+	p, ok := e.servers[jobID]
+	if ok {
 		p.lastErr = err.Error()
 	}
 }
 
 // freePort finds a free TCP port on the given host.
 func freePort(host string) (int, error) {
-	ln, err := net.Listen("tcp", host+":0")
+	var lc net.ListenConfig
+
+	ln, err := lc.Listen(context.Background(), "tcp", net.JoinHostPort(host, "0"))
 	if err != nil {
 		return 0, err
 	}

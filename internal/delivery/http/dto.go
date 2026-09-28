@@ -39,6 +39,9 @@ type updateTaskRequest struct {
 	Description *string   `json:"description"`
 	LabelSet    *[]string `json:"label_set"`
 	JSONSchema  *string   `json:"json_schema"`
+	// RetentionDays bounds how long a vision_lm task's uploaded images are
+	// kept before the automatic retention sweep deletes them.
+	RetentionDays *int `json:"retention_days"`
 }
 
 type addExamplesRequest struct {
@@ -97,3 +100,12 @@ type preferencePairRequest struct {
 	Rejected string `json:"rejected"`
 }
 
+// addVisionExampleRequest is the body of POST /tasks/{id}/examples/vision.
+// Image is base64-encoded (data-URL prefixes like "data:image/png;base64,"
+// are stripped by the handler) so a single-image add works as plain JSON
+// without a multipart round trip.
+type addVisionExampleRequest struct {
+	ImageBase64 string `json:"image_base64"`
+	Prompt      string `json:"prompt"`
+	Answer      string `json:"answer,omitempty"`
+}

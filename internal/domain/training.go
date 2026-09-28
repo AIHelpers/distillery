@@ -26,6 +26,10 @@ type Capabilities struct {
 	MaxSeqLen int `json:"max_seq_len"`
 	// Languages lists supported natural languages (e.g. "en", "multilingual").
 	Languages []string `json:"languages,omitempty"`
+	// MaxImagePixels is the maximum image area (width*height, pixels) a
+	// vision_lm model can accept before the importer/trainer must downscale.
+	// 0 = not applicable (non-vision kinds).
+	MaxImagePixels int `json:"max_image_pixels,omitempty"`
 }
 
 // BaseModel is one entry in the curated set of open-weight base models
@@ -111,6 +115,15 @@ type TrainingMetrics struct {
 	RegressionValue   float64 `json:"regression_value,omitempty"`
 	RegressionDelta   float64 `json:"regression_delta,omitempty"`
 	RegressionPassed  bool    `json:"regression_passed,omitempty"`
+
+	// Vision-language metrics (populated when Kind == KindVisionLM).
+	FieldMetrics     map[string]FieldMetric `json:"field_metrics,omitempty"`
+	JSONValidRate    float64                `json:"json_valid_rate,omitempty"`
+	ANLS             float64                `json:"anls,omitempty"`
+	DocumentAccuracy float64                `json:"document_accuracy,omitempty"`
+	BaselineFieldF1  float64                `json:"baseline_field_f1,omitempty"`
+	MacroFieldF1     float64                `json:"macro_field_f1,omitempty"`
+	DeltaFieldF1     float64                `json:"delta_field_f1,omitempty"`
 }
 
 // TrainingJob represents one fine-tuning run for a task.
@@ -152,10 +165,13 @@ type TrainingJob struct {
 	// Preference holds the DPO/ORPO hyperparameters passed to a
 	// preference_lm training run (empty unless Kind == KindPreferenceLM).
 	Preference *PreferenceConfig `json:"preference,omitempty"`
-	Seed       int               `json:"seed,omitempty"` // held-out split seed for reproducibility.
-	CreatedAt   time.Time  `json:"created_at"`
-	StartedAt   *time.Time `json:"started_at,omitempty"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	// Vision holds the hyperparameters passed to a vision_lm training run
+	// (empty unless Kind == KindVisionLM).
+	Vision      *VisionConfig `json:"vision,omitempty"`
+	Seed        int           `json:"seed,omitempty"` // held-out split seed for reproducibility.
+	CreatedAt   time.Time     `json:"created_at"`
+	StartedAt   *time.Time    `json:"started_at,omitempty"`
+	CompletedAt *time.Time    `json:"completed_at,omitempty"`
 }
 
 // TrainingJobRepository is the port for persisting training jobs.

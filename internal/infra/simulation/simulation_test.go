@@ -13,6 +13,10 @@ import (
 	"distillery/internal/infra/simulation"
 )
 
+// errNoWeightsToConvert is a fixed sentinel used by fakeGGUFExporter in
+// tests that exercise the "delegate failed" path.
+var errNoWeightsToConvert = errors.New("no trained adapter or merged model to convert")
+
 // ---------- ModelSelector ----------.
 
 func TestModelSelector_ListBaseModels(t *testing.T) {
@@ -481,7 +485,7 @@ func TestExporter_GGUF_DelegatesError(t *testing.T) {
 	}
 
 	e := simulation.NewExporterWithGGUF(&fakeGGUFExporter{
-		err: errors.New("no trained adapter or merged model to convert"),
+		err: errNoWeightsToConvert,
 	})
 
 	_, _, err := e.BuildGGUF(&domain.Task{
@@ -506,7 +510,7 @@ type fakeGGUFExporter struct {
 	err      error
 }
 
-func (f *fakeGGUFExporter) BuildGGUF(_ *domain.Task, _ *domain.TrainingJob, _ domain.GGUFExportOptions) ([]byte, string, error) {
+func (f *fakeGGUFExporter) BuildGGUF(_ *domain.Task, _ *domain.TrainingJob, _ domain.GGUFExportOptions) (data []byte, filename string, err error) {
 	return f.data, f.filename, f.err
 }
 

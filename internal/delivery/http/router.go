@@ -143,6 +143,18 @@ func registerTaskRoutes(mux *http.ServeMux, h Handlers) {
 	mux.HandleFunc("POST /api/v1/tasks/{taskID}/examples/import-ner-csv", func(w http.ResponseWriter, r *http.Request) {
 		h.Dataset.ImportNERCSV(w, r, r.PathValue("taskID"))
 	})
+	mux.HandleFunc("POST /api/v1/tasks/{taskID}/examples/vision", func(w http.ResponseWriter, r *http.Request) {
+		h.Dataset.AddVisionExample(w, r, r.PathValue("taskID"))
+	})
+	mux.HandleFunc("POST /api/v1/tasks/{taskID}/examples/import-vision-zip", func(w http.ResponseWriter, r *http.Request) {
+		h.Dataset.ImportVisionZIP(w, r, r.PathValue("taskID"))
+	})
+	mux.HandleFunc("POST /api/v1/tasks/{taskID}/examples/import-vision-pdf", func(w http.ResponseWriter, r *http.Request) {
+		h.Dataset.ImportVisionPDF(w, r, r.PathValue("taskID"))
+	})
+	mux.HandleFunc("GET /api/v1/tasks/{taskID}/blobs/{key}", func(w http.ResponseWriter, r *http.Request) {
+		h.Dataset.GetBlob(w, r, r.PathValue("taskID"), r.PathValue("key"))
+	})
 	mux.HandleFunc("PUT /api/v1/tasks/{taskID}/examples/{exampleID}", func(w http.ResponseWriter, r *http.Request) {
 		h.Dataset.UpdateExample(w, r, r.PathValue("taskID"), r.PathValue("exampleID"))
 	})

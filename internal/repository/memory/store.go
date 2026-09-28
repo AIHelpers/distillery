@@ -193,13 +193,26 @@ func (s *Store) migrate(snap *snapshot) {
 	}
 
 	// Fill missing Kind on tasks, jobs, deployments, examples, and base models.
-	for _, t := range snap.Tasks {
+	migrateTaskKinds(snap.Tasks)
+	migrateTrainingJobKinds(snap.TrainingJobs)
+	migrateDeploymentKinds(snap.Deployments)
+	migrateExampleKinds(snap.Examples)
+}
+
+// migrateTaskKinds fills missing Kind fields on tasks with the default
+// causal_lm value.
+func migrateTaskKinds(tasks map[string]*domain.Task) {
+	for _, t := range tasks {
 		if t != nil && t.Kind == "" {
 			t.Kind = domain.DefaultModelKind
 		}
 	}
+}
 
-	for _, jobs := range snap.TrainingJobs {
+// migrateTrainingJobKinds fills missing Kind fields on training jobs and
+// their base models with the default causal_lm value.
+func migrateTrainingJobKinds(trainingJobs map[string][]*domain.TrainingJob) {
+	for _, jobs := range trainingJobs {
 		for _, j := range jobs {
 			if j == nil {
 				continue
@@ -214,16 +227,24 @@ func (s *Store) migrate(snap *snapshot) {
 			}
 		}
 	}
+}
 
-	for _, deps := range snap.Deployments {
+// migrateDeploymentKinds fills missing Kind fields on deployments with the
+// default causal_lm value.
+func migrateDeploymentKinds(deployments map[string][]*domain.Deployment) {
+	for _, deps := range deployments {
 		for _, d := range deps {
 			if d != nil && d.Kind == "" {
 				d.Kind = domain.DefaultModelKind
 			}
 		}
 	}
+}
 
-	for _, exs := range snap.Examples {
+// migrateExampleKinds fills missing Kind fields on examples with the
+// default causal_lm value.
+func migrateExampleKinds(examples map[string][]*domain.Example) {
+	for _, exs := range examples {
 		for _, e := range exs {
 			if e != nil && e.Kind == "" {
 				e.Kind = domain.DefaultModelKind

@@ -47,7 +47,9 @@ func TestImportNERJSONL_Success(t *testing.T) {
 		Text     string              `json:"text"`
 		Entities []domain.EntitySpan `json:"entities"`
 	}
-	if err := json.Unmarshal(examples.addBatch[0].Payload, &payload); err != nil {
+
+	err = json.Unmarshal(examples.addBatch[0].Payload, &payload)
+	if err != nil {
 		t.Fatalf("malformed payload: %v", err)
 	}
 
