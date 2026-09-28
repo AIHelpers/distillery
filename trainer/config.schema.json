@@ -153,7 +153,8 @@
         "embedding",
         "reranker",
         "preference_lm",
-        "vision_lm"
+        "vision_lm",
+        "asr"
       ]
     },
     "max_length": {
@@ -271,6 +272,21 @@
     "freeze_vision_encoder": {
       "type": "boolean",
       "description": "Keep the vision tower frozen and train LoRA only on the language tower (vision_lm only). Default true."
+    },
+    "audio_dir": {
+      "type": "string",
+      "description": "Directory the blob store materialized this task's audio clips under (asr only); payload \"audio\" fields resolve relative to it."
+    },
+    "spec_augment": {
+      "type": "boolean",
+      "description": "asr: SpecAugment time/frequency masking over the log-mel spectrogram. Default off."
+    },
+    "glossary": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "asr: domain terms whose recall the eval reports (domain_term_recall)."
     }
   }
 }

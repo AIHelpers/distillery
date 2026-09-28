@@ -27,6 +27,11 @@ onnxruntime>=1.17.0
 
 # Vision-language / document AI trainer (trainer/tasks/vision.py).
 Pillow>=10.0.0
+
+# Speech-to-text trainer (trainer/tasks/asr.py): audio decode + resample.
+# torchaudio handles ffmpeg-decodable formats; soundfile covers plain
+# WAV/FLAC when torchaudio's ffmpeg backend is missing.
+soundfile>=0.12.0
 # PDF -> page-image rasterization for the vision dataset importer
 # (trainer/pdf_rasterize.py). Pure-Python wheels, no poppler/system deps.
 pymupdf>=1.24.0

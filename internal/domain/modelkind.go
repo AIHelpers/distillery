@@ -26,10 +26,13 @@ const (
 	// KindVisionLM is a vision-language model fine-tuned to read images and
 	// documents and answer or extract structured data from them.
 	KindVisionLM ModelKind = "vision_lm"
+	// KindASR is a speech-to-text model (Whisper fine-tune) producing a
+	// transcript (optionally timestamped segments) from audio.
+	KindASR ModelKind = "asr"
 )
 
 // ValidModelKinds returns the set of supported model kinds. Wave 2 will add
-// KindASR, KindTabular, and KindTimeSeries.
+// KindTabular and KindTimeSeries.
 func ValidModelKinds() []ModelKind {
 	return []ModelKind{
 		KindCausalLM,
@@ -39,6 +42,7 @@ func ValidModelKinds() []ModelKind {
 		KindReranker,
 		KindPreferenceLM,
 		KindVisionLM,
+		KindASR,
 	}
 }
 
@@ -75,6 +79,8 @@ func (k ModelKind) Description() string {
 		return "Learn human preferences (DPO) to align a generator or rank candidate outputs."
 	case KindVisionLM:
 		return "Read images and documents and answer or extract structured data. Best for invoices, receipts, forms, ID documents, and photo/chart understanding."
+	case KindASR:
+		return "Transcribe speech to text. Best for call centers, meeting/medical/legal dictation, field notes, and domain vocabulary (jargon, product names, accents)."
 	default:
 		return string(k)
 	}

@@ -143,6 +143,18 @@ func registerTaskRoutes(mux *http.ServeMux, h Handlers) {
 	mux.HandleFunc("POST /api/v1/tasks/{taskID}/examples/import-ner-csv", func(w http.ResponseWriter, r *http.Request) {
 		h.Dataset.ImportNERCSV(w, r, r.PathValue("taskID"))
 	})
+	mux.HandleFunc("POST /api/v1/tasks/{taskID}/examples/asr", func(w http.ResponseWriter, r *http.Request) {
+		h.Dataset.AddASRAudioExample(w, r, r.PathValue("taskID"))
+	})
+	mux.HandleFunc("POST /api/v1/tasks/{taskID}/examples/import-asr-zip", func(w http.ResponseWriter, r *http.Request) {
+		h.Dataset.ImportASRZIP(w, r, r.PathValue("taskID"))
+	})
+	mux.HandleFunc("GET /api/v1/tasks/{taskID}/examples/asr-stats", func(w http.ResponseWriter, r *http.Request) {
+		h.Dataset.ASRStats(w, r, r.PathValue("taskID"))
+	})
+	mux.HandleFunc("POST /api/v1/inference/{deploymentID}/transcribe", func(w http.ResponseWriter, r *http.Request) {
+		h.Deployment.Transcribe(w, r, r.PathValue("deploymentID"))
+	})
 	mux.HandleFunc("POST /api/v1/tasks/{taskID}/examples/vision", func(w http.ResponseWriter, r *http.Request) {
 		h.Dataset.AddVisionExample(w, r, r.PathValue("taskID"))
 	})

@@ -3,6 +3,7 @@ package http
 import (
 	"bufio"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/csv"
 	"encoding/hex"
 	"fmt"
@@ -185,6 +186,128 @@ func (h *DeploymentHandler) Invoke(w http.ResponseWriter, r *http.Request, deplo
 
 // maxVisionUploadBytes caps a single /predict image upload (20MB).
 const maxVisionUploadBytes = 20 << 20
+
+// maxASRAudioUploadBytes caps a single /transcribe audio upload (50MB,
+// comfortably above a 10-minute 16 kHz mono WAV).
+const maxASRAudioUploadBytes = 50 << 20
+
+// Transcribe serves a deployed asr model: POST /inference/{id}/transcribe.
+// Per plan 07 the primary contract is multipart (`file=@call.wav`, plus
+// optional `language`); a JSON body with base64-encoded audio
+// ({"audio_base64": "...", "filename": "...", "language": "en"}) is also
+// accepted for programmatic clients. The response shape is
+// {"kind":"asr","result":{"text":...,"segments":[...],"language":...}}.
+func (h *DeploymentHandler) Transcribe(w http.ResponseWriter, r *http.Request, deploymentID string) {
+	kind, err := h.uc.DeploymentKind(deploymentID)
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	if kind != domain.KindASR {
+		writeError(w, http.StatusBadRequest, "transcribe is only available for asr deployments")
+		return
+	}
+
+	contentType := r.Header.Get("Content-Type")
+
+	// Multipart path (the plan's documented contract).
+	if strings.HasPrefix(contentType, "multipart/") {
+		h.transcribeMultipart(w, r, deploymentID)
+		return
+	}
+
+	// JSON base64 path.
+	var req transcribeRequest
+
+	err = decodeJSON(r, &req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body")
+		return
+	}
+
+	audioBytes, err := decodeBase64Audio(req.AudioBase64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	pred, err := h.uc.InvokeTranscribe(deploymentID, apiKeyFromRequest(r), audioBytes, req.Language)
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"kind":   "asr",
+		"result": pred,
+	})
+}
+
+// transcribeMultipart handles the multipart variant of /transcribe: an audio
+// file field ("file", "audio", or "file0") and an optional "language" field.
+func (h *DeploymentHandler) transcribeMultipart(w http.ResponseWriter, r *http.Request, deploymentID string) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxASRAudioUploadBytes)
+
+	err := r.ParseMultipartForm(maxASRAudioUploadBytes)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "expected a multipart/form-data body with an audio file field")
+		return
+	}
+
+	var file multipart.File
+
+	for _, field := range []string{"file", "audio", "file0"} {
+		file, _, err = r.FormFile(field)
+		if err == nil {
+			break
+		}
+	}
+
+	if file == nil {
+		writeError(w, http.StatusBadRequest, "no audio file found (expected form field \"file\")")
+		return
+	}
+
+	defer file.Close()
+
+	data, err := io.ReadAll(io.LimitReader(file, maxASRAudioUploadBytes+1))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read uploaded audio")
+		return
+	}
+
+	pred, err := h.uc.InvokeTranscribe(deploymentID, apiKeyFromRequest(r), data, r.FormValue("language"))
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"kind":   "asr",
+		"result": pred,
+	})
+}
+
+// decodeBase64Audio decodes a base64 audio payload, stripping an optional
+// data-URL prefix ("data:audio/wav;base64,").
+func decodeBase64Audio(s string) ([]byte, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, fmt.Errorf("\"audio_base64\" must be a non-empty base64 string")
+	}
+
+	if idx := strings.Index(s, "base64,"); idx >= 0 {
+		s = s[idx+len("base64,"):]
+	}
+
+	data, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return nil, fmt.Errorf("invalid base64 audio payload")
+	}
+
+	return data, nil
+}
 
 // Embed serves the deployed embedding model. POST /inference/{id}/embed.
 func (h *DeploymentHandler) Embed(w http.ResponseWriter, r *http.Request, deploymentID string) {

@@ -118,6 +118,7 @@ function showNewTaskModal() {
           <option value="embedding">Embedding (Search / Similarity)</option>
           <option value="reranker">Reranker (Cross-Encoder)</option>
           <option value="vision_lm">Vision-Language (Document AI / Image Extraction)</option>
+          <option value="asr">Speech-to-Text (Whisper Fine-Tuning)</option>
         </select>
         <div class="modal-actions">
           <button class="btn ghost" id="nt-cancel">Cancel</button>
@@ -255,7 +256,7 @@ async function renderDatasetPanel(task) {
   }
 
   panel.innerHTML = `
-    ${task.kind === "vision_lm" ? renderVisionAddCards() : `
+    ${task.kind === "vision_lm" ? renderVisionAddCards() : task.kind === "asr" ? renderASRAddCards() : `
     <div class="card">
       <h3>Add example input/output pairs</h3>
       <p class="hint">One pair per line, input and output separated by " -&gt; ". Example:<br/>
@@ -359,7 +360,7 @@ Can I change my email on file? -> account"></textarea>
     </div>
     ` : ""}
 
-    ${task.kind === "vision_lm" ? "" : `
+    ${task.kind === "vision_lm" || task.kind === "asr" ? "" : `
     <div class="card">
       <h3>Bootstrap synthetic examples</h3>
       <p class="hint">Generate additional training pairs from your existing examples to help
@@ -379,9 +380,11 @@ Can I change my email on file? -> account"></textarea>
       ${stats ? renderStats(stats) : '<p class="muted">No dataset yet — add some examples above.</p>'}
     </div>
 
+    ${task.kind === "asr" ? `<div class="card"><h3>Audio dataset stats</h3><div id="asr-stats-body" class="hint">Loading...</div></div>` : ""}
+
     <div class="card">
       <h3>Examples (${examples.length})</h3>
-      ${task.kind === "vision_lm" ? renderVisionGallery(examples, task.id) : renderExamplesTable(examples)}
+      ${task.kind === "vision_lm" ? renderVisionGallery(examples, task.id) : task.kind === "asr" ? renderASRGallery(examples, task.id) : renderExamplesTable(examples)}
     </div>
   `;
 
@@ -685,6 +688,79 @@ Can I change my email on file? -> account"></textarea>
       }
     };
   }
+
+  // --- ASR (speech-to-text) dataset controls ---
+  const addASRBtn = document.getElementById("add-asr-btn");
+  if (addASRBtn) {
+    addASRBtn.onclick = async () => {
+      const fileInput = document.getElementById("asr-audio-input");
+      const file = fileInput.files[0];
+      const text = document.getElementById("asr-text").value.trim();
+      const speaker = document.getElementById("asr-speaker").value.trim();
+      if (!file) {
+        toast("Choose an audio file to add.", true);
+        return;
+      }
+      if (!text) {
+        toast("A transcript is required.", true);
+        return;
+      }
+      try {
+        const audioBase64 = await fileToDataURL(file);
+        await api("POST", `/tasks/${task.id}/examples/asr`, { audio_base64: audioBase64, filename: file.name, text, speaker });
+        toast("Example added.");
+        fileInput.value = "";
+        document.getElementById("asr-text").value = "";
+        document.getElementById("asr-speaker").value = "";
+        renderDatasetPanel(task);
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
+  }
+
+  const asrZipInput = document.getElementById("asr-zip-file-input");
+  if (asrZipInput) {
+    asrZipInput.onchange = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const statusEl = document.getElementById("asr-zip-status");
+      statusEl.textContent = "Importing ZIP (this can take a moment for large archives)";
+      try {
+        const buf = await file.arrayBuffer();
+        const res = await apiRawOrThrow("POST", `/tasks/${task.id}/examples/import-asr-zip`, buf, { "Content-Type": "application/zip" });
+        const stats = await res.json();
+        statusEl.textContent = "";
+        toast(`Imported ZIP (dataset now has ${stats.clips ?? stats.total} clip(s)).`);
+        renderDatasetPanel(task);
+      } catch (err) {
+        statusEl.textContent = "";
+        toast(err.message, true);
+      }
+    };
+  }
+
+  if (task.kind === "asr") {
+    api("GET", `/tasks/${task.id}/examples/asr-stats`)
+      .then((s) => {
+        const body = document.getElementById("asr-stats-body");
+        if (!body) return;
+        const hours = (s.total_seconds / 3600).toFixed(2);
+        const avg = s.average_seconds ? s.average_seconds.toFixed(1) + "s avg" : "durations unknown";
+        body.innerHTML = `
+          <div class="stat-grid">
+            <div class="stat"><div class="value">${s.clips}</div><div class="label">Clips</div></div>
+            <div class="stat"><div class="value">${hours}</div><div class="label">Hours (known)</div></div>
+            <div class="stat"><div class="value">${avg}</div><div class="label">Avg length</div></div>
+            <div class="stat"><div class="value">${s.empty_transcripts}</div><div class="label">Empty transcripts</div></div>
+          </div>
+          <div class="hint">${s.known_duration_clips}/${s.clips} clips carry a duration hint; the trainer recomputes true durations during its feature pass.</div>`;
+      })
+      .catch(() => {
+        const body = document.getElementById("asr-stats-body");
+        if (body) body.textContent = "Audio stats unavailable.";
+      });
+  }
 }
 
 // fileToDataURL reads a File/Blob into a base64 data URL
@@ -912,6 +988,83 @@ function renderVisionGallery(examples, taskId) {
   ${examples.length > 60 ? `<p class="hint" style="margin-top:10px;">Showing latest 60 of ${examples.length}.</p>` : ""}`;
 }
 
+// renderASRAddCards renders the asr dataset tab's add/import cards: a
+// single audio+transcript form and a ZIP-of-audio bulk import, replacing
+// the generic text pair/CSV/JSONL cards, which don't apply to an audio
+// dataset. The consent note addresses plan 07's privacy risk (voice data
+// is personal/biometric in many jurisdictions).
+function renderASRAddCards() {
+  return `
+    <div class="card">
+      <h3>Add an audio example</h3>
+      <p class="hint">Upload one audio clip (wav / mp3 / flac / m4a) with its transcript and,
+      optionally, a speaker tag (the trainer splits train/eval BY SPEAKER to avoid leakage).</p>
+      <div class="field" style="margin-bottom:10px;">
+        <label>Audio file</label>
+        <input type="file" id="asr-audio-input" accept=".wav,.mp3,.flac,.m4a,.ogg,audio/*" />
+      </div>
+      <div class="field" style="margin-bottom:10px;">
+        <label>Transcript</label>
+        <textarea id="asr-text" rows="2" placeholder="Please reset my Acme router to factory settings."></textarea>
+      </div>
+      <div class="field" style="margin-bottom:10px;">
+        <label>Speaker tag (optional)</label>
+        <input type="text" id="asr-speaker" placeholder="speaker_01" />
+      </div>
+      <div class="modal-actions" style="justify-content:flex-start; margin-top:4px;">
+        <button class="btn primary" id="add-asr-btn">Add example</button>
+      </div>
+      <p class="hint">By adding voice recordings you confirm the speakers consented to their
+      audio being used for model training. Audio stays local to this deployment.</p>
+    </div>
+
+    <div class="card">
+      <h3>Import a dataset ZIP</h3>
+      <p class="hint">Upload a ZIP archive containing audio files plus a <span class="source-tag">manifest.jsonl</span>
+      (one line per clip: <code>{"audio":"audio/call_0193.wav","text":"...","speaker":"...","duration":4.2}</code>,
+      audio paths relative to the archive root).</p>
+      <input type="file" id="asr-zip-file-input" accept=".zip,application/zip" />
+      <div class="hint" id="asr-zip-status"></div>
+    </div>
+  `;
+}
+
+// renderASRGallery renders an asr task's examples as an audio list (inline
+// player + transcript) instead of the generic input/output table, since an
+// asr example's data lives in its Payload ({audio, text, speaker, duration})
+// rather than the legacy Input/Output fields. Editing isn't offered here
+// (the generic PUT /examples/{id} endpoint only updates Input/Output) —
+// only delete.
+function renderASRGallery(examples, taskId) {
+  if (examples.length === 0) return '<p class="muted">No examples yet — add one above.</p>';
+  const cards = examples
+    .slice()
+    .reverse()
+    .slice(0, 60)
+    .map((e) => {
+      const payload = e.payload || {};
+      const cls = [e.flagged ? "flagged" : "", e.duplicate ? "duplicate" : ""].join(" ").trim();
+      const audioSrc = payload.audio ? `${API}/tasks/${taskId}/blobs/${encodeURIComponent(payload.audio)}` : "";
+      const statusLabel = e.flagged ? "flagged: " + escapeHtml(e.flag_note || "") : e.duplicate ? "duplicate" : !payload.text ? "needs transcript" : "ok";
+      return `
+      <div class="job-row ${cls}" style="align-items:flex-start;">
+        <div style="flex:1;min-width:0;">
+          ${audioSrc ? `<audio controls preload="none" src="${audioSrc}" style="width:100%;max-width:420px;height:32px;margin-bottom:6px;"></audio>` : ""}
+          <div class="hint">Transcript</div>
+          <div style="margin-bottom:6px;">${payload.text ? escapeHtml(truncate(payload.text, 220)) : '<span class="muted">(none yet)</span>'}</div>
+          <span class="source-tag">${escapeHtml(e.source)}</span>
+          ${payload.speaker ? `<span class="source-tag">${escapeHtml(payload.speaker)}</span>` : ""}
+          ${payload.duration ? `<span class="source-tag">${Number(payload.duration).toFixed(1)}s</span>` : ""}
+          <span class="source-tag">${statusLabel}</span>
+        </div>
+        <button class="btn small danger" data-delete-id="${e.id}">Delete</button>
+      </div>`;
+    })
+    .join("");
+  return `<div style="display:flex;flex-direction:column;gap:10px;">${cards}</div>
+  ${examples.length > 60 ? `<p class="hint" style="margin-top:10px;">Showing latest 60 of ${examples.length}.</p>` : ""}`;
+}
+
 // --- Training panel ---
 async function renderTrainingPanel(task) {
   const panel = document.getElementById("panel-training");
@@ -1123,6 +1276,20 @@ function renderJobRow(j, allJobs) {
       }
     } else if (j.kind === "token_classifier" && j.metrics.entity_f1 !== undefined) {
       metricsHint = `Entity F1: <strong>${(j.metrics.entity_f1 * 100).toFixed(1)}%</strong> (P: ${(j.metrics.entity_precision * 100).toFixed(1)}% · R: ${(j.metrics.entity_recall * 100).toFixed(1)}%) · ${j.metrics.train_examples} examples`;
+    } else if (j.kind === "asr" && j.metrics.wer !== undefined) {
+      metricsHint = `WER: <strong>${(j.metrics.wer * 100).toFixed(1)}%</strong>`;
+      if (j.metrics.base_wer !== undefined && j.metrics.base_wer !== null) {
+        const d = j.metrics.delta_wer || 0;
+        metricsHint += ` (${d >= 0 ? "-" : "+"}${Math.abs(d * 100).toFixed(1)}pt vs. base ${(j.metrics.base_wer * 100).toFixed(1)}%)`;
+      }
+      metricsHint += ` &middot; CER ${((j.metrics.cer || 0) * 100).toFixed(1)}%`;
+      if (j.metrics.insertions !== undefined) {
+        metricsHint += ` &middot; insertions ${(j.metrics.insertions * 100).toFixed(1)}%`;
+      }
+      if (j.metrics.domain_term_recall !== undefined && j.metrics.domain_term_recall !== null) {
+        metricsHint += ` &middot; glossary recall ${(j.metrics.domain_term_recall * 100).toFixed(0)}%`;
+      }
+      metricsHint += ` &middot; ${j.metrics.train_examples} held-out clips`;
     } else if (j.kind === "vision_lm" && j.metrics.macro_field_f1 !== undefined) {
       metricsHint = `Field F1: <strong>${(j.metrics.macro_field_f1 * 100).toFixed(1)}%</strong>`;
       if (j.metrics.baseline_field_f1 !== undefined && j.metrics.baseline_field_f1 !== null) {
@@ -1263,6 +1430,24 @@ async function renderDeployPanel(task) {
       ${
         !deployment
           ? '<p class="muted">Deploy a model above to test it here.</p>'
+          : task.kind === "asr"
+          ? `
+        ${
+          !knownKey
+            ? `<label>API key</label><input type="text" id="predict-key" placeholder="sk_..." />`
+            : ""
+        }
+        <div class="field" style="margin-bottom:10px;">
+          <label>Audio file (wav / mp3 / flac / m4a)</label>
+          <input type="file" id="asr-predict-file" accept=".wav,.mp3,.flac,.m4a,.ogg,audio/*" />
+        </div>
+        <div class="field" style="margin-bottom:10px;">
+          <label>Language (ISO code, optional — leave blank to auto-detect)</label>
+          <input type="text" id="asr-predict-language" placeholder="en" />
+        </div>
+        <button class="btn primary" id="asr-predict-btn">Transcribe</button>
+        <div id="predict-result"></div>
+      `
           : task.kind === "vision_lm"
           ? `
         ${
@@ -1303,7 +1488,7 @@ async function renderDeployPanel(task) {
       }
     </div>
 
-    ${task.kind === "vision_lm" ? "" : `
+    ${task.kind === "vision_lm" || task.kind === "asr" ? "" : `
     <div class="card">
       <h3>Batch inference</h3>
       <p class="hint">Upload a CSV with an "input" column (or one input per line) and get
@@ -1329,7 +1514,7 @@ async function renderDeployPanel(task) {
       <button class="btn" id="export-btn" ${!latestJob ? "disabled" : ""}>Download export package</button>
     </div>
 
-    ${task.kind === "vision_lm" ? "" : `
+    ${task.kind === "vision_lm" || task.kind === "asr" ? "" : `
     <div class="card">
       <h3>GGUF export (HomeBred-LLM / llama.cpp)</h3>
       <p class="hint">Download your trained model in GGUF format — load it directly into HomeBred-LLM
@@ -1459,6 +1644,46 @@ async function renderDeployPanel(task) {
               ${result.json_valid ? '<span class="badge" style="background:var(--ok);color:#fff;">valid JSON</span>' : '<span class="hint">not valid JSON</span>'}
             </div>
             ${result.json ? `<div class="hint" style="margin-top:8px;">Parsed JSON:</div><pre class="out">${escapeHtml(JSON.stringify(result.json, null, 2))}</pre>` : ""}
+          </div>`;
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
+  }
+
+  const asrPredictBtn = document.getElementById("asr-predict-btn");
+  if (asrPredictBtn) {
+    asrPredictBtn.onclick = async () => {
+      const fileInput = document.getElementById("asr-predict-file");
+      const file = fileInput && fileInput.files[0];
+      if (!file) {
+        toast("Choose an audio file first.", true);
+        return;
+      }
+      const key = knownKey || document.getElementById("predict-key").value.trim();
+      if (!key) {
+        toast("An API key is required to call the endpoint.", true);
+        return;
+      }
+      const form = new FormData();
+      form.append("file", file);
+      const lang = document.getElementById("asr-predict-language").value.trim();
+      if (lang) form.append("language", lang);
+      try {
+        const res = await apiRawOrThrow("POST", `/inference/${deployment.id}/transcribe`, form, {
+          Authorization: "Bearer " + key,
+        });
+        const data = await res.json();
+        const result = data.result || {};
+        const segs = Array.isArray(result.segments) ? result.segments : [];
+        document.getElementById("predict-result").innerHTML = `
+          <div class="predict-result" style="margin-top:12px;">
+            <div class="hint">Transcript${result.language ? " (" + escapeHtml(result.language) + ")" : ""}:</div>
+            <div class="out" style="white-space:pre-wrap;">${escapeHtml(result.text || "")}</div>
+            ${segs.length ? `<div class="hint" style="margin-top:8px;">Segments:</div>
+            <table style="margin-top:4px;"><tbody>${segs
+              .map((s) => `<tr><td class="hint">${Number(s.start).toFixed(1)}s - ${Number(s.end).toFixed(1)}s</td><td>${escapeHtml(s.text || "")}</td></tr>`)
+              .join("")}</tbody></table>` : ""}
           </div>`;
       } catch (e) {
         toast(e.message, true);

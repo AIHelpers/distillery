@@ -363,6 +363,10 @@ func newTrainingJob(
 		job.Vision = &domain.VisionConfig{MaxImageSide: 1280, MaxNewTokens: 256, FreezeVisionEncoder: &freezeVision}
 	}
 
+	if kind == domain.KindASR {
+		job.ASR = &domain.ASRConfig{Task: domain.ASRTaskTranscribe}
+	}
+
 	if preferenceRequested {
 		job.Preference = &prefCfg
 

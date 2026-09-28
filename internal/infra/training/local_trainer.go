@@ -469,6 +469,17 @@ type metricsJSON struct {
 	BaselineFieldF1  float64                       `json:"baseline_field_f1"`
 	MacroFieldF1     float64                       `json:"macro_field_f1"`
 	DeltaFieldF1     float64                       `json:"delta_field_f1"`
+
+	// Speech-to-text metrics (asr tasks).
+	WER              float64                 `json:"wer"`
+	CER              float64                 `json:"cer"`
+	BaseWER          float64                 `json:"base_wer"`
+	BaseCER          float64                 `json:"base_cer"`
+	DeltaWER         float64                 `json:"delta_wer"`
+	DomainTermRecall float64                 `json:"domain_term_recall"`
+	RTF              float64                 `json:"rtf"`
+	TotalHours       float64                 `json:"total_hours"`
+	DurationHist     []domain.DurationBucket `json:"duration_histogram"`
 }
 
 // readMetrics reads the metrics.json produced by the Python worker.
@@ -541,7 +552,7 @@ func metricsJSONToDomain(m *metricsJSON) *domain.TrainingMetrics {
 		RegressionDelta:   m.RegDelta,
 		RegressionPassed:  m.RegPassed,
 		// Vision-language fields propagate so the UI can render the
-		// per-field accuracy table, JSON validity rate, and ANLS score.
+		// per-field accuracy, JSON validity rate, and ANLS score.
 		FieldMetrics:     m.FieldMetrics,
 		JSONValidRate:    m.JSONValidRate,
 		ANLS:             m.ANLS,
@@ -549,6 +560,18 @@ func metricsJSONToDomain(m *metricsJSON) *domain.TrainingMetrics {
 		BaselineFieldF1:  m.BaselineFieldF1,
 		MacroFieldF1:     m.MacroFieldF1,
 		DeltaFieldF1:     m.DeltaFieldF1,
+		// Speech-to-text fields propagate so the UI can render the WER/CER
+		// comparison against the same-size base Whisper, the domain-glossary
+		// recall, and the real-time factor measured on this hardware.
+		WER:               m.WER,
+		CER:               m.CER,
+		BaseWER:           m.BaseWER,
+		BaseCER:           m.BaseCER,
+		DeltaWER:          m.DeltaWER,
+		DomainTermRecall:  m.DomainTermRecall,
+		RTF:               m.RTF,
+		TotalHours:        m.TotalHours,
+		DurationHistogram: m.DurationHist,
 	}
 }
 
@@ -706,6 +729,7 @@ func (l *LocalTrainer) writeJobConfig(
 	addEmbeddingConfig(cfg, job)
 	addRerankerConfig(cfg, job)
 	addNERConfig(cfg, job)
+	l.addASRConfig(cfg, job)
 	l.addPreferenceConfig(cfg, job)
 
 	// Track B: pass the task's JSON schema to the worker so the SFT eval can
@@ -806,11 +830,34 @@ func addNERConfig(cfg map[string]interface{}, job *domain.TrainingJob) {
 	cfg["batch_size"] = job.NER.BatchSize
 }
 
-// addPreferenceConfig passes DPO/ORPO hyperparameters through to the worker
-// when present, plus the parent SFT job's adapter directory: with LoRA, the
-// reference model is the same base with the adapter disabled, so the
-// trainer only needs the parent's adapter path, not a second copy of the
-// base model.
+// addASRConfig passes Whisper fine-tuning hyperparameters through to the
+// worker when present. Audio blobs resolve under BlobRoot/{taskID}/ exactly
+// like vision example images.
+func (l *LocalTrainer) addASRConfig(cfg map[string]interface{}, job *domain.TrainingJob) {
+	if job.ASR == nil {
+		return
+	}
+
+	cfg["audio_dir"] = filepath.Join(l.cfg.BlobRoot, filepath.Base(job.TaskID))
+	cfg["language"] = job.ASR.Language
+	cfg["task"] = job.ASR.ConfiguredTask()
+	cfg["spec_augment"] = job.ASR.SpecAugmentEnabled()
+	cfg["epochs"] = job.ASR.Epochs
+	cfg["learning_rate"] = job.ASR.LearningRate
+	cfg["batch_size"] = job.ASR.BatchSize
+
+	if job.ASR.GradientAccumulationSteps > 0 {
+		cfg["gradient_accumulation_steps"] = job.ASR.GradientAccumulationSteps
+	}
+
+	// Only pass use_lora when explicitly set (nil = the Python side's
+	// auto-by-model-size default); a raw Go nil would decode as null and
+	// crash the dataclass bool coercion in asr.py.
+	if job.ASR.UseLoRA != nil {
+		cfg["use_lora"] = *job.ASR.UseLoRA
+	}
+}
+
 func (l *LocalTrainer) addPreferenceConfig(cfg map[string]interface{}, job *domain.TrainingJob) {
 	if job.Preference == nil {
 		return

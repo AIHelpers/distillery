@@ -27,6 +27,7 @@ var (
 	ErrNoDocsOnlyExamples         = errors.New("no docs-only examples found; import a corpus first (e.g. {\"document\": \"...\"})")
 	ErrMismatchedVectorCount      = errors.New("embedding engine returned a mismatched vector count")
 	ErrNotReranker                = errors.New("deployment is not a reranker model")
+	ErrNotASRModel                = errors.New("deployment is not a speech-to-text model")
 	ErrGGUFExportUnsupported      = errors.New("configured exporter does not support GGUF conversion")
 	ErrAsyncGGUFUnsupported       = errors.New("configured exporter does not support async GGUF conversion")
 	ErrAsyncGGUFResultUnavailable = errors.New("async GGUF not available")
@@ -407,6 +408,50 @@ func (u *DeploymentUsecase) InvokeVision(deploymentID, apiKey string, imageBytes
 	pred, err := engine.PredictImage(job, usable, imageBytes, prompt)
 	if err != nil {
 		return domain.VisionPrediction{}, err
+	}
+
+	d.RequestCount++
+	_ = u.deployments.Update(d)
+
+	return pred, nil
+}
+
+// InvokeTranscribe serves a deployed asr model: raw audio bytes in, a
+// transcript (plus timestamped segments for long files) out. It only works
+// for deployments whose kind is KindASR.
+func (u *DeploymentUsecase) InvokeTranscribe(deploymentID, apiKey string, audioBytes []byte, language string) (domain.ASRPrediction, error) {
+	d, err := u.deployments.Get(deploymentID)
+	if err != nil {
+		return domain.ASRPrediction{}, err
+	}
+
+	err = u.authorize(d, apiKey)
+	if err != nil {
+		return domain.ASRPrediction{}, err
+	}
+
+	if d.Status != domain.DeploymentActive {
+		return domain.ASRPrediction{}, domain.ErrNoDeployment
+	}
+
+	engine, ok := u.engine.(domain.ASRInferenceEngine)
+	if !ok || engine == nil {
+		return domain.ASRPrediction{}, ErrNotASRModel
+	}
+
+	job, err := u.jobs.Get(d.TrainingJobID)
+	if err != nil {
+		return domain.ASRPrediction{}, err
+	}
+
+	usable, err := u.usableExamples(d.TaskID)
+	if err != nil {
+		return domain.ASRPrediction{}, err
+	}
+
+	pred, err := engine.Transcribe(job, usable, audioBytes, language)
+	if err != nil {
+		return domain.ASRPrediction{}, err
 	}
 
 	d.RequestCount++
