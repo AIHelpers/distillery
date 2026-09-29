@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/csv"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -25,11 +26,21 @@ var validGGUFQuantizations = []string{
 }
 
 type DeploymentHandler struct {
-	uc *usecase.DeploymentUsecase
+	uc      *usecase.DeploymentUsecase
+	tabular *TabularHandler
 }
 
+// NewDeploymentHandler builds the deployment handler.
 func NewDeploymentHandler(uc *usecase.DeploymentUsecase) *DeploymentHandler {
 	return &DeploymentHandler{uc: uc}
+}
+
+// WithTabular routes tabular / time_series deployments arriving on the
+// generic /predict and /batch endpoints to the table handler.
+func (h *DeploymentHandler) WithTabular(t *TabularHandler) *DeploymentHandler {
+	h.tabular = t
+
+	return h
 }
 
 // deploymentResponse wraps a deployment with the one-time raw API key. The
@@ -108,6 +119,20 @@ func (h *DeploymentHandler) Invoke(w http.ResponseWriter, r *http.Request, deplo
 	if err != nil {
 		handleErr(w, err)
 		return
+	}
+
+	// Tabular and time-series deployments have their own JSON contracts.
+	if h.tabular != nil {
+		switch kind { //nolint:exhaustive // other kinds intentionally fall through to the default
+		case domain.KindTabular:
+			h.tabular.Predict(w, r, deploymentID)
+
+			return
+		case domain.KindTimeSeries:
+			h.tabular.Forecast(w, r, deploymentID)
+
+			return
+		}
 	}
 
 	// Vision deployments are served over multipart (per the plan's
@@ -244,57 +269,17 @@ func (h *DeploymentHandler) Transcribe(w http.ResponseWriter, r *http.Request, d
 	})
 }
 
-// transcribeMultipart handles the multipart variant of /transcribe: an audio
-// file field ("file", "audio", or "file0") and an optional "language" field.
-func (h *DeploymentHandler) transcribeMultipart(w http.ResponseWriter, r *http.Request, deploymentID string) {
-	r.Body = http.MaxBytesReader(w, r.Body, maxASRAudioUploadBytes)
-
-	err := r.ParseMultipartForm(maxASRAudioUploadBytes)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "expected a multipart/form-data body with an audio file field")
-		return
-	}
-
-	var file multipart.File
-
-	for _, field := range []string{"file", "audio", "file0"} {
-		file, _, err = r.FormFile(field)
-		if err == nil {
-			break
-		}
-	}
-
-	if file == nil {
-		writeError(w, http.StatusBadRequest, "no audio file found (expected form field \"file\")")
-		return
-	}
-
-	defer file.Close()
-
-	data, err := io.ReadAll(io.LimitReader(file, maxASRAudioUploadBytes+1))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "failed to read uploaded audio")
-		return
-	}
-
-	pred, err := h.uc.InvokeTranscribe(deploymentID, apiKeyFromRequest(r), data, r.FormValue("language"))
-	if err != nil {
-		handleErr(w, err)
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"kind":   "asr",
-		"result": pred,
-	})
-}
-
 // decodeBase64Audio decodes a base64 audio payload, stripping an optional
 // data-URL prefix ("data:audio/wav;base64,").
+var (
+	errAudioEmpty   = errors.New("\"audio_base64\" must be a non-empty base64 string")
+	errAudioInvalid = errors.New("invalid base64 audio payload")
+)
+
 func decodeBase64Audio(s string) ([]byte, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return nil, fmt.Errorf("\"audio_base64\" must be a non-empty base64 string")
+		return nil, errAudioEmpty
 	}
 
 	if idx := strings.Index(s, "base64,"); idx >= 0 {
@@ -303,7 +288,7 @@ func decodeBase64Audio(s string) ([]byte, error) {
 
 	data, err := base64.StdEncoding.DecodeString(s)
 	if err != nil {
-		return nil, fmt.Errorf("invalid base64 audio payload")
+		return nil, errAudioInvalid
 	}
 
 	return data, nil
@@ -390,6 +375,15 @@ func (h *DeploymentHandler) Rerank(w http.ResponseWriter, r *http.Request, deplo
 // plain newline-separated inputs -- and returns CSV predictions. This is the
 // bulk workload narrow-task deployments exist to serve efficiently.
 func (h *DeploymentHandler) InvokeBatch(w http.ResponseWriter, r *http.Request, deploymentID string) {
+	if h.tabular != nil {
+		kind, err := h.uc.DeploymentKind(deploymentID)
+		if err == nil && (kind == domain.KindTabular || kind == domain.KindTimeSeries) {
+			h.tabular.PredictBatch(w, r, deploymentID)
+
+			return
+		}
+	}
+
 	body, err := io.ReadAll(io.LimitReader(r.Body, 5<<20)) // 5MB cap.
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "failed to read request body")
@@ -534,6 +528,51 @@ func (h *DeploymentHandler) DownloadGGUF(w http.ResponseWriter, r *http.Request,
 
 	// Clean up the GGUF file and session now that it has been streamed.
 	h.uc.CleanupGGUFSession(sessionID)
+}
+
+// transcribeMultipart handles the multipart variant of /transcribe: an audio
+// file field ("file", "audio", or "file0") and an optional "language" field.
+func (h *DeploymentHandler) transcribeMultipart(w http.ResponseWriter, r *http.Request, deploymentID string) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxASRAudioUploadBytes)
+
+	err := r.ParseMultipartForm(maxASRAudioUploadBytes)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "expected a multipart/form-data body with an audio file field")
+		return
+	}
+
+	var file multipart.File
+
+	for _, field := range []string{"file", "audio", "file0"} {
+		file, _, err = r.FormFile(field)
+		if err == nil {
+			break
+		}
+	}
+
+	if file == nil {
+		writeError(w, http.StatusBadRequest, "no audio file found (expected form field \"file\")")
+		return
+	}
+
+	defer file.Close()
+
+	data, err := io.ReadAll(io.LimitReader(file, maxASRAudioUploadBytes+1))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "failed to read uploaded audio")
+		return
+	}
+
+	pred, err := h.uc.InvokeTranscribe(deploymentID, apiKeyFromRequest(r), data, r.FormValue("language"))
+	if err != nil {
+		handleErr(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"kind":   "asr",
+		"result": pred,
+	})
 }
 
 // invokeVision handles POST /inference/{id}/predict for a vision_lm

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +29,8 @@ var (
 	ErrMismatchedVectorCount      = errors.New("embedding engine returned a mismatched vector count")
 	ErrNotReranker                = errors.New("deployment is not a reranker model")
 	ErrNotASRModel                = errors.New("deployment is not a speech-to-text model")
+	ErrNotTabularModel            = errors.New("deployment is not a tabular model")
+	ErrNotTimeSeriesModel         = errors.New("deployment is not a time-series forecasting model")
 	ErrGGUFExportUnsupported      = errors.New("configured exporter does not support GGUF conversion")
 	ErrAsyncGGUFUnsupported       = errors.New("configured exporter does not support async GGUF conversion")
 	ErrAsyncGGUFResultUnavailable = errors.New("async GGUF not available")
@@ -40,7 +43,13 @@ type DeploymentUsecase struct {
 	deployments domain.DeploymentRepository
 	engine      domain.InferenceEngine
 	exporter    domain.Exporter
-	idGen       IDGenerator
+	// tabular/forecaster serve the plan-08 tabular and time_series kinds.
+	// Either may be nil (backend without tabular support); the invoke
+	// methods then return the corresponding sentinel error.
+	tabular    domain.TabularInferenceEngine
+	forecaster domain.ForecastInferenceEngine
+	tableRows  domain.TableRowSource
+	idGen      IDGenerator
 }
 
 func NewDeploymentUsecase(
@@ -52,6 +61,23 @@ func NewDeploymentUsecase(
 	exporter domain.Exporter,
 	idGen IDGenerator,
 ) *DeploymentUsecase {
+	return NewDeploymentUsecaseFull(tasks, jobs, examples, deployments, engine, exporter, nil, nil, nil, idGen)
+}
+
+// NewDeploymentUsecaseFull is NewDeploymentUsecase plus the tabular and
+// forecast inference engines used by InvokeTable/InvokeForecast.
+func NewDeploymentUsecaseFull(
+	tasks domain.TaskRepository,
+	jobs domain.TrainingJobRepository,
+	examples domain.ExampleRepository,
+	deployments domain.DeploymentRepository,
+	engine domain.InferenceEngine,
+	exporter domain.Exporter,
+	tabular domain.TabularInferenceEngine,
+	forecaster domain.ForecastInferenceEngine,
+	tableRows domain.TableRowSource,
+	idGen IDGenerator,
+) *DeploymentUsecase {
 	return &DeploymentUsecase{
 		tasks:       tasks,
 		jobs:        jobs,
@@ -59,6 +85,9 @@ func NewDeploymentUsecase(
 		deployments: deployments,
 		engine:      engine,
 		exporter:    exporter,
+		tabular:     tabular,
+		forecaster:  forecaster,
+		tableRows:   tableRows,
 		idGen:       idGen,
 	}
 }
@@ -375,7 +404,7 @@ func (u *DeploymentUsecase) InvokeNER(deploymentID, apiKey, input string) (domai
 // InvokeVision serves a deployed vision_lm model: an image plus a prompt in,
 // generated text (+ parsed JSON when it validates) out. It only works for
 // deployments whose kind is KindVisionLM.
-func (u *DeploymentUsecase) InvokeVision(deploymentID, apiKey string, imageBytes []byte, prompt string) (domain.VisionPrediction, error) {
+func (u *DeploymentUsecase) InvokeVision(deploymentID, apiKey string, imageBytes []byte, prompt string) (domain.VisionPrediction, error) { //nolint:dupl,lll // parallel tabular/forecast paths share shape but differ in types
 	d, err := u.deployments.Get(deploymentID)
 	if err != nil {
 		return domain.VisionPrediction{}, err
@@ -419,7 +448,7 @@ func (u *DeploymentUsecase) InvokeVision(deploymentID, apiKey string, imageBytes
 // InvokeTranscribe serves a deployed asr model: raw audio bytes in, a
 // transcript (plus timestamped segments for long files) out. It only works
 // for deployments whose kind is KindASR.
-func (u *DeploymentUsecase) InvokeTranscribe(deploymentID, apiKey string, audioBytes []byte, language string) (domain.ASRPrediction, error) {
+func (u *DeploymentUsecase) InvokeTranscribe(deploymentID, apiKey string, audioBytes []byte, language string) (domain.ASRPrediction, error) { //nolint:dupl,lll // parallel tabular/forecast paths share shape but differ in types
 	d, err := u.deployments.Get(deploymentID)
 	if err != nil {
 		return domain.ASRPrediction{}, err
@@ -458,6 +487,175 @@ func (u *DeploymentUsecase) InvokeTranscribe(deploymentID, apiKey string, audioB
 	_ = u.deployments.Update(d)
 
 	return pred, nil
+}
+
+// InvokeTable serves a deployed tabular model: a feature row in (validated
+// against the deployment's stored feature schema with clear errors for missing
+// fields and unknown categories), prediction + top factors out. It only works
+// for deployments whose kind is KindTabular.
+func (u *DeploymentUsecase) InvokeTable(deploymentID, apiKey string, input map[string]interface{}) (domain.TablePrediction, error) {
+	d, job, err := u.activeTableDeployment(deploymentID, apiKey, domain.KindTabular)
+	if err != nil {
+		return domain.TablePrediction{}, err
+	}
+
+	if u.tabular == nil {
+		return domain.TablePrediction{}, ErrNotTabularModel
+	}
+
+	row, err := d.FeatureSchema.ValidateRow(input)
+	if err != nil {
+		return domain.TablePrediction{}, err
+	}
+
+	pred, err := u.tabular.PredictTable(job, u.tableRows, d.FeatureSchema, row)
+	if err != nil {
+		return domain.TablePrediction{}, err
+	}
+
+	u.countRequests(d, 1)
+
+	return pred, nil
+}
+
+// TableBatchResult is one scored row of a tabular batch run.
+type TableBatchResult struct {
+	Prediction domain.TablePrediction
+	Error      string
+}
+
+// InvokeTableBatch scores many rows with a single authorization; rows that
+// fail schema validation are reported per row instead of failing the batch.
+func (u *DeploymentUsecase) InvokeTableBatch(
+	deploymentID, apiKey string, rows []map[string]interface{},
+) ([]TableBatchResult, error) {
+	d, job, err := u.activeTableDeployment(deploymentID, apiKey, domain.KindTabular)
+	if err != nil {
+		return nil, err
+	}
+
+	if u.tabular == nil {
+		return nil, ErrNotTabularModel
+	}
+
+	out := make([]TableBatchResult, len(rows))
+	scored := 0
+
+	for i, in := range rows {
+		row, verr := d.FeatureSchema.ValidateRow(in)
+		if verr != nil {
+			out[i].Error = verr.Error()
+
+			continue
+		}
+
+		pred, perr := u.tabular.PredictTable(job, u.tableRows, d.FeatureSchema, row)
+		if perr != nil {
+			out[i].Error = perr.Error()
+
+			continue
+		}
+
+		out[i].Prediction = pred
+		scored++
+	}
+
+	u.countRequests(d, scored)
+
+	return out, nil
+}
+
+// InvokeForecast serves a deployed time-series model: optional caller-supplied
+// history rows (falling back to the training series) in, forecast points with
+// prediction intervals out. It only works for KindTimeSeries deployments.
+func (u *DeploymentUsecase) InvokeForecast(deploymentID, apiKey string, req domain.ForecastRequest) (domain.ForecastResult, error) {
+	d, job, err := u.activeTableDeployment(deploymentID, apiKey, domain.KindTimeSeries)
+	if err != nil {
+		return domain.ForecastResult{}, err
+	}
+
+	if u.forecaster == nil {
+		return domain.ForecastResult{}, ErrNotTimeSeriesModel
+	}
+
+	// Fall back to the job's configured horizon when the caller omits one.
+	if req.Horizon <= 0 && job.Forecast != nil {
+		req.Horizon = job.Forecast.Horizon
+	}
+
+	if req.Horizon <= 0 || req.Horizon > maxForecastHorizon {
+		return domain.ForecastResult{}, fmt.Errorf("%w: horizon must be between 1 and %d", domain.ErrInvalidInput, maxForecastHorizon)
+	}
+
+	result, err := u.forecaster.Forecast(job, u.tableRows, req)
+	if err != nil {
+		return domain.ForecastResult{}, err
+	}
+
+	u.countRequests(d, 1)
+
+	return result, nil
+}
+
+// InvokeForecastBatch forecasts every series found in a history CSV (one
+// forecast per distinct item_id, or one for single-series models).
+func (u *DeploymentUsecase) InvokeForecastBatch(
+	deploymentID, apiKey string, history []map[string]interface{}, horizon int,
+) ([]domain.ForecastResult, error) {
+	d, job, err := u.activeTableDeployment(deploymentID, apiKey, domain.KindTimeSeries)
+	if err != nil {
+		return nil, err
+	}
+
+	if u.forecaster == nil {
+		return nil, ErrNotTimeSeriesModel
+	}
+
+	if horizon <= 0 && job.Forecast != nil {
+		horizon = job.Forecast.Horizon
+	}
+
+	if horizon <= 0 || horizon > maxForecastHorizon {
+		return nil, fmt.Errorf("%w: horizon must be between 1 and %d", domain.ErrInvalidInput, maxForecastHorizon)
+	}
+
+	ids := []string{""}
+
+	if job.Forecast != nil && job.Forecast.ItemID != "" && len(history) > 0 {
+		seen := map[string]bool{}
+		ids = nil
+
+		for _, r := range history {
+			id := strings.TrimSpace(fmt.Sprintf("%v", r[job.Forecast.ItemID]))
+			if id != "" && id != "<nil>" && !seen[id] {
+				seen[id] = true
+				ids = append(ids, id)
+			}
+		}
+
+		sort.Strings(ids)
+	}
+
+	const maxBatchSeries = 500
+
+	if len(ids) > maxBatchSeries {
+		return nil, fmt.Errorf("%w: at most %d series per batch", domain.ErrInvalidInput, maxBatchSeries)
+	}
+
+	out := make([]domain.ForecastResult, 0, len(ids))
+
+	for _, id := range ids {
+		res, ferr := u.forecaster.Forecast(job, u.tableRows, domain.ForecastRequest{History: history, Horizon: horizon, ItemID: id})
+		if ferr != nil {
+			return nil, ferr
+		}
+
+		out = append(out, res)
+	}
+
+	u.countRequests(d, len(out))
+
+	return out, nil
 }
 
 // BatchResult is one row of a batch inference run.
@@ -857,6 +1055,46 @@ func (u *DeploymentUsecase) CleanupGGUFSession(sessionID string) {
 	asyncExporter.CleanupGGUFSession(sessionID)
 }
 
+// activeTableDeployment authorizes the caller and returns the deployment and
+// its training job, checking the deployment serves the wanted kind.
+func (u *DeploymentUsecase) activeTableDeployment(
+	deploymentID, apiKey string, kind domain.ModelKind,
+) (*domain.Deployment, *domain.TrainingJob, error) {
+	d, err := u.deployments.Get(deploymentID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	err = u.authorize(d, apiKey)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if d.Status != domain.DeploymentActive {
+		return nil, nil, domain.ErrNoDeployment
+	}
+
+	if d.Kind != kind {
+		if kind == domain.KindTabular {
+			return nil, nil, ErrNotTabularModel
+		}
+
+		return nil, nil, ErrNotTimeSeriesModel
+	}
+
+	job, err := u.jobs.Get(d.TrainingJobID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return d, job, nil
+}
+
+func (u *DeploymentUsecase) countRequests(d *domain.Deployment, n int) {
+	d.RequestCount += n
+	_ = u.deployments.Update(d)
+}
+
 // --- unexported helpers ---.
 
 // exportGGUF routes to the configured GGUF exporter, guarding for the case
@@ -878,11 +1116,24 @@ func (u *DeploymentUsecase) exportGGUF(task *domain.Task, job *domain.TrainingJo
 	return ggufExporter.BuildGGUF(task, job, opts)
 }
 
+// inferenceEndpoint is the URL clients call for a deployment of the given kind.
+func inferenceEndpoint(id string, kind domain.ModelKind) string {
+	if kind == domain.KindTimeSeries {
+		return fmt.Sprintf("/api/v1/inference/%s/forecast", id)
+	}
+
+	return fmt.Sprintf("/api/v1/inference/%s/predict", id)
+}
+
 func (u *DeploymentUsecase) deployJob(
 	taskID string,
 	job *domain.TrainingJob,
 	autoscale bool,
 ) (*domain.Deployment, string, error) {
+	if job.Kind == domain.KindTabular && (job.Metrics == nil || job.Metrics.FeatureSchema == nil) {
+		return nil, "", fmt.Errorf("%w: the trained model recorded no feature schema", domain.ErrNoModel)
+	}
+
 	// Stop any currently active deployment for this task before deploying anew.
 	active, err := u.deployments.GetActiveForTask(taskID)
 	if err == nil {
@@ -905,7 +1156,7 @@ func (u *DeploymentUsecase) deployJob(
 		TaskID:        taskID,
 		TrainingJobID: job.ID,
 		Kind:          job.Kind,
-		Endpoint:      fmt.Sprintf("/api/v1/inference/%s/predict", id),
+		Endpoint:      inferenceEndpoint(id, job.Kind),
 		Autoscale:     autoscale,
 		Status:        domain.DeploymentActive,
 		APIKeyHash:    keyHash,
@@ -920,6 +1171,10 @@ func (u *DeploymentUsecase) deployJob(
 		if job.Metrics.DefaultThreshold > 0 {
 			d.ConfidenceThreshold = job.Metrics.DefaultThreshold
 		}
+
+		// Tabular deployments copy the trained feature schema for input
+		// validation at predict time.
+		d.FeatureSchema = job.Metrics.FeatureSchema
 	}
 
 	err = u.deployments.Create(d)

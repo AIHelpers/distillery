@@ -28,6 +28,11 @@ type Deployment struct {
 	// LabelMap maps label -> id for seq_classifier deployments (used by the
 	// inference server to decode the model head). Empty for causal_lm.
 	LabelMap map[string]int `json:"label_map,omitempty"`
+	// FeatureSchema records the tabular input contract (feature names,
+	// types, allowed categories, classes) so /predict can validate inputs
+	// and reject unknown categories / missing fields with clear errors.
+	// Populated for tabular deployments.
+	FeatureSchema *FeatureSchema `json:"feature_schema,omitempty"`
 	// ConfidenceThreshold is the default below-threshold cutoff for
 	// seq_classifier deployments (predictions under it enter the review queue).
 	ConfidenceThreshold float64 `json:"confidence_threshold,omitempty"`

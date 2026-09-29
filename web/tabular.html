@@ -1,0 +1,582 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Distillery — Tables &amp; Forecasting</title>
+  <link rel="icon" type="image/svg+xml" href="/static/logo.svg" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    .subnav { display:flex; gap:14px; margin-left:auto; }
+    .subnav a { color:var(--steel-light); text-decoration:none; font-size:13px; padding:4px 2px; border-bottom:2px solid transparent; }
+    .subnav a:hover, .subnav a.active { color:var(--paper); border-bottom-color:var(--ember); }
+    .card { border:1px solid var(--charcoal-3); border-radius:8px; padding:12px 16px; margin:12px 0; background:var(--charcoal-2); }
+    .card h3 { margin:4px 0 10px; color:var(--paper); font-family:var(--font-display); }
+    .card h4 { margin:16px 0 6px; color:var(--brass); }
+    [hidden] { display:none !important; }
+    .row { display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; margin:6px 0; }
+    .row > div { min-width:160px; }
+    select, input[type=password], input:not([type]), input[type=file] {
+      width:100%; background:var(--charcoal); border:1px solid var(--charcoal-3); border-radius:3px;
+      color:var(--paper); padding:8px 10px; font-size:13px; font-family:var(--font-mono); }
+    input[type=file] { padding:6px; font-family:var(--font-body); }
+    .grid { width:100%; border-collapse:collapse; font-size:13px; margin:8px 0 12px; }
+    .grid th, .grid td { border:1px solid var(--charcoal-3); padding:4px 8px; text-align:left; vertical-align:top; }
+    .grid th { color:var(--steel-light); background:var(--charcoal-3); }
+    .grid select, .grid input[type=text] { padding:4px 6px; }
+    .warn { color:var(--warn); font-size:13px; margin:2px 0; }
+    .err { color:var(--err); font-size:13px; }
+    .ok { color:var(--ok); font-size:13px; }
+    .kpis { display:flex; gap:12px; flex-wrap:wrap; margin:8px 0; }
+    .kpi { border:1px solid var(--charcoal-3); border-radius:8px; padding:8px 14px; min-width:130px; background:var(--charcoal); }
+    .kpi b { display:block; font-size:22px; color:var(--paper); }
+    .bar { background:var(--ember); height:12px; border-radius:3px; min-width:2px; }
+    .chosen td { font-weight:600; background:rgba(255,90,31,.10); color:var(--paper); }
+    .baseline td { opacity:.75; font-style:italic; }
+    .progress { height:8px; background:var(--charcoal-3); border-radius:4px; overflow:hidden; margin:8px 0; }
+    .progress > div { height:100%; background:var(--ember); transition:width .3s; }
+    pre.json { background:var(--charcoal); padding:10px; border-radius:6px; overflow:auto; font-size:12px; white-space:pre-wrap; color:var(--steel-light); }
+    .keybox { border:2px solid var(--warn); border-radius:6px; padding:8px 12px; margin:8px 0; word-break:break-all; font-family:var(--font-mono); color:var(--paper); user-select:all; }
+    svg.chart { width:100%; max-width:560px; height:auto; background:var(--charcoal); border-radius:6px; }
+    .cm td { text-align:center; min-width:48px; }
+    .card a { color:var(--ember); }
+    .side-item { display:block; padding:4px 0; color:var(--steel-light); }
+  </style>
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="brand"><img src="/static/logo.svg" alt="" class="brand-icon" /> Distillery</div>
+    <div class="tagline">Tabular ML &amp; Time-Series Forecasting</div>
+    <nav class="subnav">
+      <a href="/">Tasks</a>
+      <a href="/tabular.html" class="active">Tables</a>
+      <a href="/agent.html">Agents</a>
+      <a href="/models.html">Models</a>
+    </nav>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <h2>Task</h2>
+      <select id="task" class="block"></select>
+      <p class="muted" id="task-hint"></p>
+      <h2>Tables</h2>
+      <div id="table-list"></div>
+    </aside>
+
+    <main class="main">
+      <section class="card">
+        <h3>1 · Upload a CSV</h3>
+        <div class="row">
+          <div><label for="csv-file">CSV file (comma, semicolon, tab or pipe separated)</label><input type="file" id="csv-file" accept=".csv,.tsv,.txt,text/csv" /></div>
+          <div><label for="up-target">Target column (optional)</label><input id="up-target" placeholder="e.g. churned" /></div>
+          <div class="ts-only"><label for="up-ts">Timestamp column</label><input id="up-ts" placeholder="e.g. date" /></div>
+          <div class="ts-only"><label for="up-item">Series id column (optional)</label><input id="up-item" placeholder="e.g. sku" /></div>
+          <div><button class="btn primary" id="btn-upload">Upload</button></div>
+        </div>
+        <div id="up-msg"></div>
+      </section>
+
+      <section class="card" id="mapper-panel" hidden>
+        <h3>2 · Column mapper</h3>
+        <div id="mapper-summary" class="muted"></div>
+        <div id="mapper-warn"></div>
+        <div id="mapper-settings" class="row"></div>
+        <table class="grid" id="mapper-grid"></table>
+        <div class="row">
+          <div><button class="btn primary" id="btn-save">Save mapping</button></div>
+          <div><button class="btn" id="btn-preview">Preview rows</button></div>
+          <div><button class="btn" id="btn-delete">Delete table</button></div>
+        </div>
+        <div id="mapper-msg"></div>
+        <div id="preview"></div>
+      </section>
+
+      <section class="card" id="train-panel" hidden>
+        <h3>3 · Train</h3>
+        <div id="train-form" class="row"></div>
+        <button class="btn primary" id="btn-train">Start training</button>
+        <div id="train-msg"></div>
+        <div class="progress" id="train-bar" hidden><div style="width:0%"></div></div>
+      </section>
+
+      <section class="card" id="results-panel" hidden>
+        <h3>4 · Results</h3>
+        <div id="results"></div>
+        <div class="row"><div><button class="btn primary" id="btn-deploy" hidden>Deploy this model</button></div></div>
+        <div id="deploy-msg"></div>
+      </section>
+
+      <section class="card" id="test-panel" hidden>
+        <h3>5 · Try the deployed endpoint</h3>
+        <div class="row">
+          <div style="min-width:320px"><label for="api-key">API key (returned once at deploy time)</label><input id="api-key" type="password" autocomplete="off" placeholder="sk_…" /></div>
+        </div>
+        <div id="test-form" class="row"></div>
+        <button class="btn primary" id="btn-send">Send</button>
+        <pre class="json" id="test-out">{ }</pre>
+        <div class="row">
+          <div><label for="batch-file">Batch: CSV in, CSV out</label><input type="file" id="batch-file" accept=".csv,text/csv" /></div>
+          <div class="ts-only"><label for="batch-h">Horizon</label><input id="batch-h" type="number" min="1" value="14" /></div>
+          <div><button class="btn" id="btn-batch">Run batch</button></div>
+        </div>
+        <div id="batch-msg"></div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<script>
+"use strict";
+const API = "/api/v1";
+const state = { task: null, table: null, job: null, deployment: null, timer: null };
+
+// ---------- tiny DOM helpers (all text goes through textContent: no HTML injection) ----------
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === undefined || v === null || v === false) continue;
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (k === "value") el.value = v;
+    else el.setAttribute(k, v === true ? "" : String(v));
+  }
+  for (const kid of kids.flat()) {
+    if (kid === null || kid === undefined || kid === false) continue;
+    el.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+  }
+  return el;
+}
+const $ = (id) => document.getElementById(id);
+function clear(el) { while (el.firstChild) el.removeChild(el.firstChild); return el; }
+function fmt(v, d = 4) { return typeof v === "number" && isFinite(v) ? String(Math.round(v * 10 ** d) / 10 ** d) : (v ?? "—"); }
+function msg(el, text, cls) { clear($(el)).append(h("span", { class: cls || "" }, text)); }
+
+async function api(path, opts = {}) {
+  const r = await fetch(API + path, opts);
+  const text = await r.text();
+  let body = null;
+  try { body = JSON.parse(text); } catch { /* non-JSON */ }
+  if (!r.ok) throw new Error((body && (body.error || body.message)) || text || r.statusText);
+  return body;
+}
+const jsonOpts = (method, body, headers = {}) =>
+  ({ method, headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) });
+
+const isTS = () => state.table && state.table.kind === "time_series";
+
+// ---------- tasks & tables ----------
+async function init() {
+  const tasks = (await api("/tasks")) || [];
+  const usable = tasks.filter((t) => t.kind === "tabular" || t.kind === "time_series");
+  const sel = clear($("task"));
+  usable.forEach((t) => sel.append(h("option", { value: t.id, "data-kind": t.kind }, `${t.name || t.id} (${t.kind === "time_series" ? "forecasting" : "tabular"})`)));
+  $("task-hint").textContent = usable.length ? "" : "Create a task with kind “tabular” or “time_series” on the Tasks page first.";
+  sel.addEventListener("change", onTask);
+  onTask();
+}
+
+function taskKind() {
+  const o = $("task").selectedOptions[0];
+  return o ? o.getAttribute("data-kind") : "";
+}
+
+async function onTask() {
+  state.task = $("task").value || null;
+  state.table = state.job = state.deployment = null;
+  stopPolling();
+  ["mapper-panel", "train-panel", "results-panel", "test-panel"].forEach((id) => ($(id).hidden = true));
+  document.querySelectorAll(".ts-only").forEach((e) => (e.hidden = taskKind() !== "time_series"));
+  await refreshTables();
+}
+
+async function refreshTables() {
+  const list = clear($("table-list"));
+  if (!state.task) return;
+  const tables = (await api(`/tasks/${encodeURIComponent(state.task)}/tables`).catch(() => [])) || [];
+  if (!tables.length) list.append(h("p", { class: "muted" }, "No tables yet."));
+  tables.forEach((t) => list.append(h("a", { href: "#", class: "side-item", onclick: (e) => { e.preventDefault(); openTable(t.id); } },
+    `${t.filename || t.id} · ${t.row_count} rows`)));
+}
+
+$("btn-upload").addEventListener("click", async () => {
+  const f = $("csv-file").files[0];
+  if (!f || !state.task) return msg("up-msg", "Choose a task and a CSV file first.", "warn");
+  const fd = new FormData();
+  fd.append("file", f);
+  for (const [field, el] of [["target", "up-target"], ["timestamp", "up-ts"], ["item_id_column", "up-item"]]) {
+    if ($(el).value.trim()) fd.append(field, $(el).value.trim());
+  }
+  try {
+    const td = await api(`/tasks/${encodeURIComponent(state.task)}/tables`, { method: "POST", body: fd });
+    msg("up-msg", `Uploaded ${td.row_count} rows, ${td.columns.length} columns.`, "ok");
+    await refreshTables();
+    openTable(td.id, td);
+  } catch (e) { msg("up-msg", e.message, "err"); }
+});
+
+async function openTable(id, td) {
+  try {
+    state.table = td || (await api(`/tasks/${encodeURIComponent(state.task)}/tables/${encodeURIComponent(id)}`));
+  } catch (e) { return msg("up-msg", e.message, "err"); }
+  state.job = null; state.deployment = null; stopPolling();
+  $("mapper-panel").hidden = false; $("train-panel").hidden = false;
+  $("results-panel").hidden = true; $("test-panel").hidden = true;
+  clear($("preview")); clear($("train-msg")); $("train-bar").hidden = true;
+  renderMapper(); renderTrainForm();
+}
+
+// ---------- mapper ----------
+const COL_TYPES = ["numeric", "categorical", "datetime", "text", "id", "ignored"];
+const FREQS = [["", "— choose —"], ["H", "Hourly (H)"], ["D", "Daily (D)"], ["W", "Weekly (W)"], ["M", "Monthly (M)"], ["Q", "Quarterly (Q)"], ["Y", "Yearly (Y)"]];
+
+function select(id, options, current) {
+  return h("select", { id }, options.map(([v, label]) => h("option", { value: v, selected: v === current }, label)));
+}
+
+function renderMapper() {
+  const t = state.table;
+  $("mapper-summary").textContent = `${t.filename} · ${t.row_count} rows · ${t.kind === "time_series" ? "time series" : "tabular"}`;
+  const warn = clear($("mapper-warn"));
+  t.columns.forEach((c) => (c.warnings || []).forEach((w) => warn.append(h("div", { class: "warn" }, `⚠ ${c.name}: ${w}`))));
+
+  const colOpts = (allowEmpty) => [...(allowEmpty ? [["", "—"]] : []), ...t.columns.map((c) => [c.name, c.name])];
+  const set = clear($("mapper-settings"));
+  const field = (label, el) => h("div", {}, h("label", { for: el.id }, label), el);
+  set.append(field("Target column", select("m-target", colOpts(false), t.target)));
+  if (isTS()) {
+    set.append(field("Timestamp column", select("m-ts", colOpts(false), t.extra.timestamp_column || "")));
+    set.append(field("Series id column", select("m-item", colOpts(true), t.extra.item_id_column || "")));
+    set.append(field(t.frequency_confirmed ? "Frequency (confirmed)" : "Frequency — please confirm",
+      select("m-freq", FREQS, t.frequency || "")));
+    set.append(field("Default horizon", h("input", { id: "m-horizon", type: "number", min: 1, value: t.horizon || 14 })));
+  } else {
+    set.append(field("Task", select("m-task", [["", "auto-detect"], ["classification", "classification"], ["regression", "regression"]], t.extra.task || "")));
+    set.append(field("Validation split", select("m-split", [["", "auto"], ["random", "random"], ["stratified", "stratified"], ["time", "time-based (chronological)"], ["group", "group-based"]], t.extra.split || "")));
+    set.append(field("Group column", select("m-group", colOpts(true), t.extra.group_column || "")));
+  }
+
+  const grid = clear($("mapper-grid"));
+  grid.append(h("tr", {}, ["Column", "Type", "Use as feature", "Unique", "Missing", "Sample"].map((x) => h("th", {}, x))));
+  const excluded = new Set(t.excluded || []);
+  t.columns.forEach((c, i) => {
+    const isTarget = c.name === t.target;
+    grid.append(h("tr", {},
+      h("td", {}, c.name),
+      h("td", {}, h("select", { "data-col": c.name, "data-f": "type" },
+        COL_TYPES.map((x) => h("option", { value: x, selected: x === c.type }, x)))),
+      h("td", {}, isTarget ? h("span", { class: "muted" }, "target") :
+        h("input", { type: "checkbox", "data-col": c.name, "data-f": "use", checked: !excluded.has(c.name) && !["id", "ignored", "text"].includes(c.type) })),
+      h("td", {}, c.unique ?? ""), h("td", {}, c.missing ?? 0),
+      h("td", { class: "muted" }, (c.sample || []).join(" · "))));
+  });
+}
+
+function collectMapping() {
+  const types = {}, excluded = [];
+  document.querySelectorAll("#mapper-grid [data-f=type]").forEach((s) => (types[s.dataset.col] = s.value));
+  document.querySelectorAll("#mapper-grid [data-f=use]").forEach((c) => { if (!c.checked) excluded.push(c.dataset.col); });
+  const body = { target: $("m-target").value, types, excluded };
+  if (isTS()) {
+    body.timestamp = $("m-ts").value; body.item_id = $("m-item").value;
+    if ($("m-freq").value) body.frequency = $("m-freq").value;
+    body.horizon = parseInt($("m-horizon").value, 10) || 0;
+  } else {
+    body.task = $("m-task").value; body.split = $("m-split").value;
+    body.group_column = $("m-group").value;
+  }
+  return body;
+}
+
+$("btn-save").addEventListener("click", async () => {
+  try {
+    state.table = await api(`/tasks/${encodeURIComponent(state.task)}/tables/${encodeURIComponent(state.table.id)}/mapping`,
+      jsonOpts("PUT", collectMapping()));
+    renderMapper(); renderTrainForm();
+    msg("mapper-msg", "Mapping saved.", "ok");
+  } catch (e) { msg("mapper-msg", e.message, "err"); }
+});
+
+$("btn-preview").addEventListener("click", async () => {
+  try {
+    const p = await api(`/tasks/${encodeURIComponent(state.task)}/tables/${encodeURIComponent(state.table.id)}/preview?limit=15`);
+    const cols = p.columns || state.table.columns.map((c) => c.name);
+    clear($("preview")).append(h("table", { class: "grid" },
+      h("tr", {}, cols.map((c) => h("th", {}, c))),
+      (p.rows || []).map((r) => h("tr", {}, cols.map((c) => h("td", {}, r[c] ?? ""))))));
+  } catch (e) { msg("mapper-msg", e.message, "err"); }
+});
+
+$("btn-delete").addEventListener("click", async () => {
+  if (!confirm("Delete this table? Trained models keep working, but you cannot retrain from it.")) return;
+  try {
+    await api(`/tasks/${encodeURIComponent(state.task)}/tables/${encodeURIComponent(state.table.id)}`, { method: "DELETE" });
+    state.table = null;
+    ["mapper-panel", "train-panel", "results-panel", "test-panel"].forEach((id) => ($(id).hidden = true));
+    refreshTables();
+  } catch (e) { msg("mapper-msg", e.message, "err"); }
+});
+
+// ---------- training ----------
+function renderTrainForm() {
+  const f = clear($("train-form"));
+  const t = state.table;
+  const field = (label, el) => h("div", {}, h("label", { for: el.id }, label), el);
+  if (isTS()) {
+    f.append(field("Horizon (steps)", h("input", { id: "t-horizon", type: "number", min: 1, value: t.horizon || 14 })));
+    f.append(field("Metric", select("t-metric", [["mase", "MASE (primary)"], ["smape", "sMAPE"], ["wql", "Weighted quantile loss"]], "mase")));
+    f.append(field("Backtest windows", h("input", { id: "t-windows", type: "number", min: 1, max: 10, value: 3 })));
+    f.append(field("Model family", select("t-model", [["auto", "auto (compare all)"], ["seasonal_naive", "seasonal naive only"], ["stats", "statistical"], ["gbm", "GBM with lags (Python trainer)"], ["chronos", "Chronos zero-shot (Python trainer, experimental)"]], "auto")));
+  } else {
+    const reg = (t.extra.task || "") === "regression";
+    f.append(field("Model", select("t-model", [["lightgbm", "LightGBM"], ["xgboost", "XGBoost"], ["catboost", "CatBoost"], ["auto", "auto (compare libraries)"]], "lightgbm")));
+    f.append(field("Metric", select("t-metric", reg
+      ? [["rmse", "RMSE"], ["mae", "MAE"], ["r2", "R²"]]
+      : [["roc_auc", "ROC-AUC"], ["pr_auc", "PR-AUC"], ["f1", "F1"], ["accuracy", "Accuracy"], ["logloss", "Log loss"]], reg ? "rmse" : "roc_auc")));
+    f.append(field("Search time budget (s)", h("input", { id: "t-budget", type: "number", min: 5, max: 3600, value: 60 })));
+    f.append(field("CV folds", h("input", { id: "t-folds", type: "number", min: 2, max: 10, value: 5 })));
+  }
+  if (isTS() && !t.frequency_confirmed) {
+    f.append(h("div", { class: "warn" }, "Confirm the frequency in the mapper (and save) before training a forecast."));
+  }
+}
+
+$("btn-train").addEventListener("click", async () => {
+  const t = state.table;
+  const num = (id) => parseInt($(id).value, 10) || 0;
+  let path, body;
+  if (isTS()) {
+    path = "/training/forecast";
+    body = { table_id: t.id, horizon: num("t-horizon"), metric: $("t-metric").value, backtest_windows: num("t-windows"), model: $("t-model").value };
+  } else {
+    path = "/training/tabular";
+    body = { table_id: t.id, model: $("t-model").value, metric: $("t-metric").value, time_budget_sec: num("t-budget"), cv_folds: num("t-folds") };
+  }
+  try {
+    const job = await api(`/tasks/${encodeURIComponent(state.task)}${path}`, jsonOpts("POST", body));
+    state.job = job; state.deployment = null;
+    $("results-panel").hidden = false; $("test-panel").hidden = true;
+    clear($("results")); clear($("deploy-msg")); $("btn-deploy").hidden = true;
+    msg("train-msg", `Training job started (v${job.version}).`, "ok");
+    poll(job.id);
+  } catch (e) { msg("train-msg", e.message, "err"); }
+});
+
+function stopPolling() { if (state.timer) { clearTimeout(state.timer); state.timer = null; } }
+
+async function poll(jobID) {
+  stopPolling();
+  const bar = $("train-bar"); bar.hidden = false;
+  try {
+    const job = await api(`/training/${encodeURIComponent(jobID)}`);
+    if (!state.job || state.job.id !== jobID) return;
+    state.job = job;
+    bar.firstChild.style.width = Math.max(2, job.progress || 0) + "%";
+    if (job.status === "running") { state.timer = setTimeout(() => poll(jobID), 1000); return; }
+    bar.hidden = true;
+    if (job.status === "failed") return msg("train-msg", "Training failed: " + (job.error || "unknown error"), "err");
+    msg("train-msg", "Training finished.", "ok");
+    renderResults(job);
+  } catch (e) {
+    msg("train-msg", "Lost contact with the server: " + e.message, "err");
+  }
+}
+
+// ---------- results ----------
+function svgEl(tag, attrs) {
+  const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs || {})) el.setAttribute(k, String(v));
+  return el;
+}
+
+function lineChart(series, opts = {}) {
+  const W = 560, H = 260, P = 34;
+  const xs = series.flatMap((s) => s.points.map((p) => p[0])), ys = series.flatMap((s) => s.points.map((p) => p[1]));
+  if (opts.band) opts.band.forEach((p) => ys.push(p[1], p[2]));
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const sx = (x) => P + ((x - x0) / (x1 - x0 || 1)) * (W - 2 * P), sy = (y) => H - P - ((y - y0) / (y1 - y0 || 1)) * (H - 2 * P);
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart", role: "img", "aria-label": opts.label || "chart" });
+  svg.append(svgEl("rect", { x: P, y: P / 2, width: W - 2 * P, height: H - 1.5 * P, fill: "none", stroke: "#9a938a", "stroke-opacity": .4 }));
+  if (opts.band) {
+    const up = opts.band.map((p) => `${sx(p[0])},${sy(p[2])}`), lo = opts.band.map((p) => `${sx(p[0])},${sy(p[1])}`).reverse();
+    svg.append(svgEl("polygon", { points: [...up, ...lo].join(" "), fill: "#ff5a1f", "fill-opacity": .18 }));
+  }
+  series.forEach((s) => svg.append(svgEl("polyline", {
+    points: s.points.map((p) => `${sx(p[0])},${sy(p[1])}`).join(" "), fill: "none", stroke: s.color, "stroke-width": 2,
+    "stroke-dasharray": s.dash || "" })));
+  [y0, y1].forEach((y) => { const t = svgEl("text", { x: 2, y: sy(y) + 4, "font-size": 10, fill: "#9a938a" }); t.textContent = fmt(y, 2); svg.append(t); });
+  series.forEach((s, i) => { const t = svgEl("text", { x: P + 6 + i * 130, y: 12, "font-size": 11, fill: s.color }); t.textContent = "— " + s.name; svg.append(t); });
+  return svg;
+}
+
+function scatter(points, label) {
+  const W = 560, H = 260, P = 34;
+  const xs = points.map((p) => p[0]), ys = points.map((p) => p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(0, ...ys), y1 = Math.max(0, ...ys);
+  const sx = (x) => P + ((x - x0) / (x1 - x0 || 1)) * (W - 2 * P), sy = (y) => H - P - ((y - y0) / (y1 - y0 || 1)) * (H - 2 * P);
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart", role: "img", "aria-label": label });
+  svg.append(svgEl("line", { x1: P, x2: W - P, y1: sy(0), y2: sy(0), stroke: "#9a938a" }));
+  points.forEach((p) => svg.append(svgEl("circle", { cx: sx(p[0]), cy: sy(p[1]), r: 2.5, fill: "#ff5a1f", "fill-opacity": .6 })));
+  return svg;
+}
+
+function renderResults(job) {
+  const m = job.metrics;
+  const box = clear($("results"));
+  if (!m) return box.append(h("p", { class: "warn" }, "No metrics were recorded for this job."));
+  const hi = m.higher_is_better;
+  const bl = m.baselines || {};
+  const baseKey = bl[m.primary_metric] !== undefined ? m.primary_metric : Object.keys(bl)[0];
+  const base = baseKey ? bl[baseKey] : null;
+
+  box.append(h("div", { class: "kpis" },
+    h("div", { class: "kpi" }, h("span", { class: "muted" }, m.primary_metric + (hi ? " (higher is better)" : " (lower is better)")), h("b", {}, fmt(m.primary_value))),
+    base !== null && h("div", { class: "kpi" }, h("span", { class: "muted" }, "baseline (" + baseKey + ")"), h("b", {}, fmt(base))),
+    h("div", { class: "kpi" }, h("span", { class: "muted" }, "gain over baseline"), h("b", {}, (m.improvement_over_baseline >= 0 ? "+" : "") + fmt(m.improvement_over_baseline))),
+    m.cv_score !== undefined && h("div", { class: "kpi" }, h("span", { class: "muted" }, "CV score ± std"), h("b", {}, `${fmt(m.cv_score)} ± ${fmt(m.cv_std)}`)),
+    h("div", { class: "kpi" }, h("span", { class: "muted" }, "engine / split"), h("b", { style: "font-size:15px" }, `${m.table_backend || "—"}${m.split_used ? " · " + m.split_used : ""}`))));
+  if (m.table_backend && m.table_backend.startsWith("simulation")) {
+    box.append(h("p", { class: "warn" }, "Simulation backend: kNN / statistical stand-ins, not gradient-boosted models. Run the server with TRAINING_BACKEND=local for LightGBM/XGBoost/CatBoost."));
+  }
+  (m.leakage_warnings || []).forEach((w) => box.append(h("p", { class: "warn" }, "⚠ " + w)));
+
+  if ((m.leaderboard || []).length) {
+    box.append(h("h4", {}, "Leaderboard"), h("table", { class: "grid" },
+      h("tr", {}, ["Model", "Score", "± std", "Notes"].map((x) => h("th", {}, x))),
+      m.leaderboard.map((c) => h("tr", { class: c.chosen ? "chosen" : c.baseline ? "baseline" : "" },
+        h("td", {}, c.model), h("td", {}, fmt(c.score)), h("td", {}, c.std !== undefined ? fmt(c.std) : ""),
+        h("td", {}, c.chosen ? "chosen" : c.baseline ? "baseline" : "")))));
+  }
+  if (m.holdout_metrics) {
+    box.append(h("h4", {}, "Holdout metrics"), h("table", { class: "grid" },
+      Object.entries(m.holdout_metrics).map(([k, v]) => h("tr", {}, h("td", {}, k), h("td", {}, fmt(v)),
+        h("td", { class: "muted" }, m.baselines && m.baselines[k] !== undefined ? "baseline " + fmt(m.baselines[k]) : "")))));
+  }
+  if ((m.feature_importance || []).length) {
+    const mx = Math.max(...m.feature_importance.map((f) => f.impact), 1e-12);
+    box.append(h("h4", {}, "Feature importance (mean |SHAP|)"), h("table", { class: "grid" },
+      m.feature_importance.slice(0, 15).map((f) => h("tr", {}, h("td", {}, f.feature),
+        h("td", { style: "width:60%" }, h("div", { class: "bar", style: `width:${Math.max(1, (f.impact / mx) * 100)}%` })), h("td", {}, fmt(f.impact))))));
+  }
+  if ((m.confusion_matrix || []).length) {
+    const labels = Object.entries(m.label_map || {}).sort((a, b) => a[1] - b[1]).map((e) => e[0]);
+    box.append(h("h4", {}, "Confusion matrix (holdout; rows = actual, columns = predicted)"), h("table", { class: "grid cm" },
+      h("tr", {}, h("th", {}, ""), m.confusion_matrix.map((_, j) => h("th", {}, labels[j] ?? j))),
+      m.confusion_matrix.map((row, i) => h("tr", {}, h("th", {}, labels[i] ?? i), row.map((v) => h("td", {}, v))))));
+  }
+  if ((m.roc_curve || []).length > 1) {
+    box.append(h("h4", {}, "ROC curve (holdout)"), lineChart([
+      { name: "model", color: "#ff5a1f", points: m.roc_curve }, { name: "chance", color: "#9a938a", dash: "4 4", points: [[0, 0], [1, 1]] }], { label: "ROC curve" }));
+  }
+  if (m.calibration) {
+    const c = m.calibration;
+    box.append(h("p", { class: "muted" }, `Calibration (${c.method}): Brier ${fmt(c.brier_before)} → ${fmt(c.brier_after)}, ECE ${fmt(c.ece_before)} → ${fmt(c.ece_after)}`));
+  }
+  if ((m.residuals || []).length) {
+    box.append(h("h4", {}, "Residuals (x = predicted, y = actual − predicted)"), scatter(m.residuals, "residual plot"));
+  }
+  if (m.backtest_plot) {
+    const p = m.backtest_plot, idx = p.actual.map((_, i) => i);
+    box.append(h("h4", {}, "Backtest — last window"), lineChart([
+      { name: "actual", color: "#f2ede4", points: idx.map((i) => [i, p.actual[i]]) },
+      { name: "model", color: "#ff5a1f", points: idx.map((i) => [i, p.predicted[i]]) },
+      { name: "seasonal naive", color: "#d9a441", dash: "4 3", points: idx.map((i) => [i, p.seasonal_naive[i]]) }],
+      { band: (p.lower || []).map((lo, i) => [i, lo, p.upper[i]]), label: "backtest" }));
+  }
+  if ((m.backtest || []).length) {
+    box.append(h("h4", {}, `Backtest by window (season length ${m.season_length})`), h("table", { class: "grid" },
+      h("tr", {}, ["Window", "Origin", "Model", "MASE", "sMAPE", "WQL", "Seasonal-naive MASE"].map((x) => h("th", {}, x))),
+      m.backtest.map((w) => h("tr", { class: w.model === m.chosen_model ? "chosen" : "" },
+        [w.window, w.origin, w.model, fmt(w.mase), fmt(w.smape), fmt(w.wql), fmt(w.seasonal_naive_mase)].map((x) => h("td", {}, x))))));
+  }
+  $("btn-deploy").hidden = false;
+  $("btn-deploy").textContent = "Deploy this model";
+}
+
+// ---------- deploy / test ----------
+$("btn-deploy").addEventListener("click", async () => {
+  if (!state.job) return;
+  try {
+    const r = await api(`/tasks/${encodeURIComponent(state.task)}/training/${encodeURIComponent(state.job.id)}/deploy`, jsonOpts("POST", {}));
+    state.deployment = r;
+    const box = clear($("deploy-msg"));
+    box.append(h("p", { class: "ok" }, "Deployed. Endpoint: " + r.endpoint),
+      h("p", { class: "warn" }, "Copy the API key now — it is shown only once."),
+      h("div", { class: "keybox" }, r.api_key || "(no key returned)"));
+    $("api-key").value = r.api_key || "";
+    $("test-panel").hidden = false;
+    renderTestForm();
+  } catch (e) { msg("deploy-msg", e.message, "err"); }
+});
+
+function renderTestForm() {
+  const f = clear($("test-form"));
+  const d = state.deployment;
+  const field = (label, el) => h("div", {}, h("label", { for: el.id }, label), el);
+  if (d.kind === "time_series") {
+    f.append(field("Series id (needed when the model has several series)", h("input", { id: "tf-item" })));
+    f.append(field("Horizon", h("input", { id: "tf-horizon", type: "number", min: 1, value: 14 })));
+    return;
+  }
+  const features = (d.feature_schema && d.feature_schema.features) || [];
+  features.forEach((ft, i) => {
+    const id = "tf-" + i;
+    let el;
+    if (ft.type === "categorical" && (ft.categories || []).length && !ft.open_vocabulary) {
+      el = h("select", { id }, [h("option", { value: "" }, ft.optional ? "(none)" : "— choose —"), ...ft.categories.map((c) => h("option", { value: c }, c))]);
+    } else if (ft.type === "numeric") {
+      el = h("input", { id, type: "number", step: "any", min: ft.min, max: ft.max, placeholder: ft.min !== undefined ? `${fmt(ft.min, 2)} … ${fmt(ft.max, 2)}` : "" });
+    } else {
+      el = h("input", { id, placeholder: ft.type === "datetime" ? "2024-01-31 or 2024-01-31T10:00:00" : "" });
+    }
+    el.dataset.feature = ft.name; el.dataset.ftype = ft.type;
+    f.append(field(ft.name + (ft.optional ? " (optional)" : ""), el));
+  });
+}
+
+const authHeaders = () => ({ Authorization: "Bearer " + $("api-key").value.trim() });
+
+$("btn-send").addEventListener("click", async () => {
+  const d = state.deployment; if (!d) return;
+  const out = $("test-out");
+  try {
+    let path, body;
+    if (d.kind === "time_series") {
+      path = `/inference/${encodeURIComponent(d.id)}/forecast`;
+      body = { horizon: parseInt($("tf-horizon").value, 10) || 14 };
+      if ($("tf-item").value.trim()) body.item_id = $("tf-item").value.trim();
+    } else {
+      path = `/inference/${encodeURIComponent(d.id)}/predict`;
+      const input = {};
+      document.querySelectorAll("#test-form [data-feature]").forEach((el) => {
+        if (el.value === "") return;
+        input[el.dataset.feature] = el.dataset.ftype === "numeric" ? Number(el.value) : el.value;
+      });
+      body = { input };
+    }
+    const r = await fetch(API + path, jsonOpts("POST", body, authHeaders()));
+    const t = await r.text();
+    let pretty = t; try { pretty = JSON.stringify(JSON.parse(t), null, 2); } catch { /* keep raw */ }
+    out.textContent = (r.ok ? "" : `HTTP ${r.status}\n`) + pretty;
+  } catch (e) { out.textContent = e.message; }
+});
+
+$("btn-batch").addEventListener("click", async () => {
+  const d = state.deployment, f = $("batch-file").files[0];
+  if (!d || !f) return msg("batch-msg", "Deploy a model and choose a CSV first.", "warn");
+  try {
+    const q = d.kind === "time_series" ? "?horizon=" + (parseInt($("batch-h").value, 10) || 14) : "";
+    const r = await fetch(`${API}/inference/${encodeURIComponent(d.id)}/predict-batch${q}`,
+      { method: "POST", headers: { "Content-Type": "text/csv", ...authHeaders() }, body: await f.text() });
+    if (!r.ok) throw new Error((await r.text()) || r.statusText);
+    const blob = await r.blob();
+    const a = h("a", { href: URL.createObjectURL(blob), download: d.kind === "time_series" ? "forecast.csv" : "predictions.csv" }, "Download result CSV");
+    clear($("batch-msg")).append(a);
+  } catch (e) { msg("batch-msg", e.message, "err"); }
+});
+
+init().catch((e) => { $("task-hint").textContent = "Could not load tasks: " + e.message; });
+</script>
+</body>
+</html>

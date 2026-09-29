@@ -220,7 +220,7 @@ The requested value maps directly to a llama.cpp quantization scheme:
 
 **Container**
 
-The Docker image installs the `gguf` extra (`./trainer[gguf]`) and ships
+The Docker image installs the `gguf` and `tabular` extras (`./trainer[gguf,tabular]`) and ships
 with `PYTHONPATH=/srv` + `TRAINING_BACKEND=local`, so the same GGUF
 pipeline works unchanged in production containers.
 

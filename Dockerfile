@@ -11,10 +11,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /out/distillery ./cmd/server
 # --- Runtime stage ---
 FROM python:3.11-slim AS runtime
 
-# Install system deps + the trainer package with the GGUF extra so
+# Install system deps + the trainer package with the GGUF and tabular extras so
 # `python -m trainer.gguf` works for on-demand GGUF conversion.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates libgomp1 \
     && rm -rf /var/lib/apt/lists/* \
     && adduser --disabled-password --no-create-home --uid 10001 distillery \
     && mkdir -p /data && chown distillery /data
@@ -24,8 +24,8 @@ WORKDIR /srv
 # Copy trainer source + build config.
 COPY trainer ./trainer
 
-# Install the trainer package + its gguf extra (pure-Python gguf package).
-RUN pip install --no-cache-dir "./trainer[gguf]"
+# Install the trainer package + its extras: gguf (pure-Python) and tabular (LightGBM/XGBoost/CatBoost; libgomp1 above).
+RUN pip install --no-cache-dir "./trainer[gguf,tabular]"
 
 # Copy the Go binary.
 COPY --from=build /out/distillery /usr/local/bin/distillery

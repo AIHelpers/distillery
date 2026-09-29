@@ -27,6 +27,20 @@ dependencies = [
 gguf = [
     "gguf>=0.10.0",
 ]
+# Tabular ML (plan 08). numpy alone works (pure-numpy booster); the GBM
+# libraries are used when installed. pandas is needed by CatBoost only.
+tabular = [
+    "lightgbm>=4.0.0",
+    "xgboost>=2.0.0",
+    "catboost>=1.2.0",
+    "pandas>=2.0.0",
+]
+# Optional statistical / pretrained forecasters (large downloads; Chronos
+# is untested in CI).
+forecast = [
+    "statsforecast>=1.7.0",
+]
+
 # Optional fallback: llama-cpp-python (requires native C++ compilation).
 gguf-native = [
     "llama-cpp-python>=0.2.5",

@@ -27,6 +27,7 @@ import (
 	"distillery/internal/infra/pdfraster"
 	"distillery/internal/infra/serving"
 	"distillery/internal/infra/simulation"
+	infratabular "distillery/internal/infra/tabular"
 	localtraining "distillery/internal/infra/training"
 	"distillery/internal/repository/memory"
 	"distillery/internal/usecase"
@@ -86,6 +87,7 @@ type repositories struct {
 	ftModelRepo    domain.TrainedModelRepository
 	ftDatasetRepo  domain.DatasetRepository
 	modelStoreRepo domain.ModelStoreRepository
+	tableRepo      domain.TableDatasetRepository
 }
 
 // newRepositories builds every repository on top of a single shared,
@@ -105,12 +107,14 @@ func newRepositories(dataPath string) repositories {
 		ftModelRepo:    memory.NewTrainedModelRepo(store),
 		ftDatasetRepo:  memory.NewDatasetRepo(store),
 		modelStoreRepo: memory.NewModelStoreRepo(store),
+		tableRepo:      memory.NewTableDatasetRepo(store),
 	}
 }
 
 // dependencies holds the infra adapters and usecases built from repositories.
 type dependencies struct {
 	datasetUC *usecase.DatasetUsecase
+	tabularUC *usecase.TabularUsecase
 
 	taskUC       *usecase.TaskUsecase
 	trainingUC   *usecase.TrainingUsecase
@@ -148,7 +152,8 @@ func newDependencies(repos *repositories) dependencies {
 	// training worker, so it's wired regardless of TRAINING_BACKEND.
 	pdfRasterizer := pdfraster.NewRasterizer(envOr("PYTHON_BIN", "python"))
 
-	tuner, exporter := newTrainingBackend(blobRoot, ggufProgress)
+	backend := newTrainingBackend(blobRoot, ggufProgress)
+	tuner, exporter := backend.tuner, backend.exporter
 	inferenceEngine := newInferenceEngine()
 
 	idGen := usecase.NewRandomIDGenerator()
@@ -158,9 +163,38 @@ func newDependencies(repos *repositories) dependencies {
 		WithBlobStore(blobStore).
 		WithPDFRasterizer(pdfRasterizer)
 	trainingUC := usecase.NewTrainingUsecase(repos.taskRepo, repos.exampleRepo, repos.trainingRepo, modelSelector, tuner, idGen)
-	deploymentUC := usecase.NewDeploymentUsecase(
+	// Tabular / time-series (plan 08). Simulation backend: honest kNN +
+	// statistical forecasters in pure Go. Local backend: the Python GBM /
+	// forecast trainer, served by long-lived Python model workers and
+	// exported as a portable package; the Go engines remain the fallback for
+	// jobs without trained artifacts.
+	simTable := simulation.NewTableInferenceEngine()
+
+	var (
+		tableTuner   domain.FineTuner               = simulation.NewTableFineTuner()
+		tabularInfer domain.TabularInferenceEngine  = simTable
+		forecastInfr domain.ForecastInferenceEngine = simTable
+	)
+
+	if backend.local != nil {
+		tableTuner = tuner
+
+		serving := infratabular.NewEngine(infratabular.ServingConfig{
+			PythonBin: backend.local.PythonBin,
+			JobsDir:   backend.local.JobsDir,
+		}, simTable, simTable)
+		tabularInfer, forecastInfr = serving, serving
+		exporter = infratabular.NewExporter(exporter, backend.local.JobsDir, "trainer")
+	}
+
+	routedTuner := infratabular.NewRouter(tuner, tableTuner)
+
+	tabularUC := usecase.NewTabularUsecase(
+		repos.taskRepo, repos.tableRepo, repos.trainingRepo, blobStore, routedTuner, idGen,
+	)
+	deploymentUC := usecase.NewDeploymentUsecaseFull(
 		repos.taskRepo, repos.trainingRepo, repos.exampleRepo, repos.deploymentRepo,
-		inferenceEngine, exporter, idGen,
+		inferenceEngine, exporter, tabularInfer, forecastInfr, tabularUC, idGen,
 	)
 	feedbackUC := usecase.NewFeedbackUsecase(repos.taskRepo, repos.feedbackRepo, repos.exampleRepo, idGen)
 
@@ -184,6 +218,7 @@ func newDependencies(repos *repositories) dependencies {
 
 	return dependencies{
 		datasetUC:    datasetUC,
+		tabularUC:    tabularUC,
 		taskUC:       taskUC,
 		trainingUC:   trainingUC,
 		deploymentUC: deploymentUC,
@@ -194,10 +229,18 @@ func newDependencies(repos *repositories) dependencies {
 	}
 }
 
+// trainingBackend is the wired trainer/exporter pair; local is non-nil for
+// TRAINING_BACKEND=local (it carries the resolved worker configuration).
+type trainingBackend struct {
+	tuner    domain.FineTuner
+	exporter domain.Exporter
+	local    *localtraining.Config
+}
+
 // newTrainingBackend selects and wires the FineTuner/Exporter pair per
 // TRAINING_BACKEND ("simulation" default, or "local" for real QLoRA training
 // via the Python trainer worker).
-func newTrainingBackend(blobRoot string, ggufProgress *localtraining.GGUFProgressStore) (domain.FineTuner, domain.Exporter) {
+func newTrainingBackend(blobRoot string, ggufProgress *localtraining.GGUFProgressStore) trainingBackend {
 	if envOr("TRAINING_BACKEND", "simulation") == "local" {
 		// MODEL_CACHE_DIR is shared by training and GGUF conversion so the
 		// base model weights only need to be downloaded once.
@@ -212,7 +255,7 @@ func newTrainingBackend(blobRoot string, ggufProgress *localtraining.GGUFProgres
 		localExporter := localtraining.NewLocalExporter(&trainingCfg)
 		localExporter.Progress = ggufProgress
 
-		return tuner, localExporter
+		return trainingBackend{tuner: tuner, exporter: localExporter, local: &trainingCfg}
 	}
 
 	// Even in simulation mode, GGUF export delegates to the real production
@@ -225,7 +268,7 @@ func newTrainingBackend(blobRoot string, ggufProgress *localtraining.GGUFProgres
 	})
 	ggufConverter.Progress = ggufProgress
 
-	return simulation.NewFineTuner(), simulation.NewExporterWithGGUF(ggufConverter)
+	return trainingBackend{tuner: simulation.NewFineTuner(), exporter: simulation.NewExporterWithGGUF(ggufConverter)}
 }
 
 // newInferenceEngine selects the deployment-serving backend per
@@ -245,15 +288,18 @@ func newInferenceEngine() domain.InferenceEngine {
 
 // newHandlers builds the HTTP delivery layer's handler bundle from deps.
 func newHandlers(deps dependencies) deliveryhttp.Handlers {
+	tabularHandler := deliveryhttp.NewTabularHandler(deps.tabularUC, deps.deploymentUC)
+
 	return deliveryhttp.Handlers{
 		Task:       deliveryhttp.NewTaskHandler(deps.taskUC),
 		Dataset:    deliveryhttp.NewDatasetHandler(deps.datasetUC),
 		Training:   deliveryhttp.NewTrainingHandler(deps.trainingUC),
-		Deployment: deliveryhttp.NewDeploymentHandler(deps.deploymentUC),
+		Deployment: deliveryhttp.NewDeploymentHandler(deps.deploymentUC).WithTabular(tabularHandler),
 		Feedback:   deliveryhttp.NewFeedbackHandler(deps.feedbackUC),
 		Agent:      deliveryhttp.NewAgentHandler(deps.agentOrchUC),
 		FineTune:   deliveryhttp.NewFineTuneHandler(deps.ftUC),
 		ModelStore: deliveryhttp.NewModelStoreHandler(deps.modelStoreUC),
+		Tabular:    tabularHandler,
 	}
 }
 
