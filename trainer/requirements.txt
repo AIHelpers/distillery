@@ -35,3 +35,14 @@ soundfile>=0.12.0
 # PDF -> page-image rasterization for the vision dataset importer
 # (trainer/pdf_rasterize.py). Pure-Python wheels, no poppler/system deps.
 pymupdf>=1.24.0
+
+# Tabular ML & forecasting (trainer/tasks/tabular.py, forecast.py, tablelib.py).
+# numpy alone is enough (pure-numpy booster fallback); the GBM libraries are
+# picked up automatically when installed. Keep in sync with the `tabular`
+# extra in pyproject.toml.
+lightgbm>=4.0.0
+xgboost>=2.0.0
+catboost>=1.2.0
+pandas>=2.0.0
+# Optional statsforecast baselines / Chronos forecasters (big download).
+# statsforecast>=1.7.0

@@ -142,6 +142,80 @@ type TrainingMetrics struct {
 	// ASR audio dataset stats (populated when Kind == KindASR).
 	TotalHours        float64          `json:"total_hours,omitempty"`
 	DurationHistogram []DurationBucket `json:"duration_histogram,omitempty"`
+
+	// Tabular metrics (populated when Kind == KindTabular). Primary is the
+	// headline metric on the untouched holdout; Baselines always shows the
+	// majority/mean predictor on the same holdout.
+	Primary           string             `json:"primary_metric,omitempty"`
+	PrimaryVal        float64            `json:"primary_value,omitempty"`
+	HigherIsBetter    bool               `json:"higher_is_better,omitempty"`
+	Baselines         map[string]float64 `json:"baselines,omitempty"`
+	HoldoutMetrics    map[string]float64 `json:"holdout_metrics,omitempty"`
+	CVScore           float64            `json:"cv_score,omitempty"`
+	CVStd             float64            `json:"cv_std,omitempty"`
+	Improvement       float64            `json:"improvement_over_baseline,omitempty"`
+	TableBackend      string             `json:"table_backend,omitempty"`
+	SplitUsed         string             `json:"split_used,omitempty"`
+	Leaderboard       []TabularCandidate `json:"leaderboard,omitempty"`
+	FeatureImportance []FeatureImpact    `json:"feature_importance,omitempty"`
+	LeakageWarnings   []string           `json:"leakage_warnings,omitempty"`
+	ROCCurve          [][2]float64       `json:"roc_curve,omitempty"`
+	Residuals         [][2]float64       `json:"residuals,omitempty"`
+	Calibration       *CalibrationInfo   `json:"calibration,omitempty"`
+	// FeatureSchema records the deployed model's input contract (numeric +
+	// categorical features, allowed categories, classes). Copied onto the
+	// deployment at deploy time for input validation.
+	FeatureSchema *FeatureSchema `json:"feature_schema,omitempty"`
+	// Forecast metrics (populated when Kind == KindTimeSeries).
+	Backtest     []BacktestWindow `json:"backtest,omitempty"`
+	BacktestPlot *BacktestPlot    `json:"backtest_plot,omitempty"`
+	ChosenModel  string           `json:"chosen_model,omitempty"`
+	SeasonLength int              `json:"season_length,omitempty"`
+}
+
+// CalibrationInfo reports probability calibration of a binary classifier.
+type CalibrationInfo struct {
+	Method      string  `json:"method"`
+	BrierBefore float64 `json:"brier_before"`
+	BrierAfter  float64 `json:"brier_after"`
+	ECEBefore   float64 `json:"ece_before"`
+	ECEAfter    float64 `json:"ece_after"`
+}
+
+// TabularCandidate is one leaderboard row: a candidate model family /
+// hyperparameter set and its cross-validated score.
+type TabularCandidate struct {
+	Model    string                 `json:"model"`
+	Score    float64                `json:"score"`
+	Std      float64                `json:"std,omitempty"`
+	Metric   string                 `json:"metric,omitempty"`
+	Baseline bool                   `json:"baseline,omitempty"`
+	Chosen   bool                   `json:"chosen,omitempty"`
+	Params   map[string]interface{} `json:"params,omitempty"`
+}
+
+// BacktestWindow is one rolling-origin evaluation window of a forecasting
+// backtest for one model: its scores on that window. SeasonalNaiveMASE is the
+// baseline's score on the same window.
+type BacktestWindow struct {
+	Window            int     `json:"window"`
+	Origin            string  `json:"origin"`
+	Model             string  `json:"model"`
+	MASE              float64 `json:"mase"`
+	SMAPE             float64 `json:"smape"`
+	WQL               float64 `json:"wql,omitempty"`
+	SeasonalNaiveMASE float64 `json:"seasonal_naive_mase"`
+}
+
+// BacktestPlot is the last backtest window of the first series (actual vs
+// the chosen model and the seasonal-naive baseline) for the UI chart.
+type BacktestPlot struct {
+	Timestamps    []string  `json:"timestamps"`
+	Actual        []float64 `json:"actual"`
+	Predicted     []float64 `json:"predicted"`
+	SeasonalNaive []float64 `json:"seasonal_naive"`
+	Lower         []float64 `json:"lower,omitempty"`
+	Upper         []float64 `json:"upper,omitempty"`
 }
 
 // TrainingJob represents one fine-tuning run for a task.
@@ -188,11 +262,19 @@ type TrainingJob struct {
 	Vision *VisionConfig `json:"vision,omitempty"`
 	// ASR holds the hyperparameters passed to an asr training run
 	// (empty unless Kind == KindASR).
-	ASR         *ASRConfig `json:"asr,omitempty"`
-	Seed        int        `json:"seed,omitempty"` // held-out split seed for reproducibility.
-	CreatedAt   time.Time  `json:"created_at"`
-	StartedAt   *time.Time `json:"started_at,omitempty"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
+	ASR *ASRConfig `json:"asr,omitempty"`
+	// Tabular holds the hyperparameters passed to a tabular training run
+	// (empty unless Kind == KindTabular).
+	Tabular *TabularConfig `json:"tabular,omitempty"`
+	// Forecast holds the hyperparameters passed to a time_series training
+	// run (empty unless Kind == KindTimeSeries).
+	Forecast *ForecastConfig `json:"forecast,omitempty"`
+	// TableDatasetID links a tabular/time_series job to its uploaded table.
+	TableDatasetID string     `json:"table_dataset_id,omitempty"`
+	Seed           int        `json:"seed,omitempty"` // held-out split seed for reproducibility.
+	CreatedAt      time.Time  `json:"created_at"`
+	StartedAt      *time.Time `json:"started_at,omitempty"`
+	CompletedAt    *time.Time `json:"completed_at,omitempty"`
 }
 
 // TrainingJobRepository is the port for persisting training jobs.

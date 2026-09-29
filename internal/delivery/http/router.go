@@ -20,6 +20,50 @@ type Handlers struct {
 	Agent      *AgentHandler
 	FineTune   *FineTuneHandler
 	ModelStore *ModelStoreHandler
+	Tabular    *TabularHandler
+}
+
+// registerTabularRoutes wires the tabular / time-series surface: table
+// datasets (upload with type inference, column mapper, preview) plus the
+// /inference predict/forecast/batch endpoints validated against the
+// deployed feature schema.
+func registerTabularRoutes(mux *http.ServeMux, h Handlers) {
+	mux.HandleFunc("POST /api/v1/tasks/{taskID}/tables", func(w http.ResponseWriter, r *http.Request) {
+		h.Tabular.UploadTable(w, r, r.PathValue("taskID"))
+	})
+	mux.HandleFunc("GET /api/v1/tasks/{taskID}/tables", func(w http.ResponseWriter, r *http.Request) {
+		h.Tabular.ListTables(w, r, r.PathValue("taskID"))
+	})
+	mux.HandleFunc("GET /api/v1/tasks/{taskID}/tables/{tableID}", func(w http.ResponseWriter, r *http.Request) {
+		h.Tabular.GetTable(w, r, r.PathValue("taskID"), r.PathValue("tableID"))
+	})
+	mux.HandleFunc("PUT /api/v1/tasks/{taskID}/tables/{tableID}/mapping", func(w http.ResponseWriter, r *http.Request) {
+		h.Tabular.UpdateTableMapping(w, r, r.PathValue("taskID"), r.PathValue("tableID"))
+	})
+	mux.HandleFunc("GET /api/v1/tasks/{taskID}/tables/{tableID}/preview", func(w http.ResponseWriter, r *http.Request) {
+		h.Tabular.TablePreview(w, r, r.PathValue("taskID"), r.PathValue("tableID"))
+	})
+	mux.HandleFunc("POST /api/v1/tasks/{taskID}/training/tabular", func(w http.ResponseWriter, r *http.Request) {
+		h.Tabular.StartTabularTraining(w, r, r.PathValue("taskID"))
+	})
+	mux.HandleFunc("POST /api/v1/tasks/{taskID}/training/forecast", func(w http.ResponseWriter, r *http.Request) {
+		h.Tabular.StartForecastTraining(w, r, r.PathValue("taskID"))
+	})
+	mux.HandleFunc("DELETE /api/v1/tasks/{taskID}/tables/{tableID}", func(w http.ResponseWriter, r *http.Request) {
+		h.Tabular.DeleteTable(w, r, r.PathValue("taskID"), r.PathValue("tableID"))
+	})
+	// /predict and /batch on the generic inference routes dispatch to the
+	// table handler for tabular / time_series deployments; the explicit
+	// aliases below stay for clients that prefer kind-specific URLs.
+	mux.HandleFunc("POST /api/v1/inference/{deploymentID}/predict-table", func(w http.ResponseWriter, r *http.Request) {
+		h.Tabular.Predict(w, r, r.PathValue("deploymentID"))
+	})
+	mux.HandleFunc("POST /api/v1/inference/{deploymentID}/forecast", func(w http.ResponseWriter, r *http.Request) {
+		h.Tabular.Forecast(w, r, r.PathValue("deploymentID"))
+	})
+	mux.HandleFunc("POST /api/v1/inference/{deploymentID}/predict-batch", func(w http.ResponseWriter, r *http.Request) {
+		h.Tabular.PredictBatch(w, r, r.PathValue("deploymentID"))
+	})
 }
 
 // adminToken holds the static admin token used to authorize the management
@@ -39,6 +83,7 @@ func NewRouter(h Handlers, webFS fs.FS) http.Handler {
 	registerFeedbackRoutes(mux, h)
 	registerAgentRoutes(mux, h)
 	registerFineTuneRoutes(mux, h.FineTune)
+	registerTabularRoutes(mux, h)
 
 	// --- Health check (useful for container orchestrators) ---.
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {

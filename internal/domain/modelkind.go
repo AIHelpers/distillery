@@ -29,6 +29,12 @@ const (
 	// KindASR is a speech-to-text model (Whisper fine-tune) producing a
 	// transcript (optionally timestamped segments) from audio.
 	KindASR ModelKind = "asr"
+	// KindTabular is a gradient-boosted (LightGBM/XGBoost/CatBoost)
+	// classifier or regressor over structured rows.
+	KindTabular ModelKind = "tabular"
+	// KindTimeSeries is a forecasting model over timestamped series
+	// (baselines + pretrained forecasters).
+	KindTimeSeries ModelKind = "time_series"
 )
 
 // ValidModelKinds returns the set of supported model kinds. Wave 2 will add
@@ -43,6 +49,8 @@ func ValidModelKinds() []ModelKind {
 		KindPreferenceLM,
 		KindVisionLM,
 		KindASR,
+		KindTabular,
+		KindTimeSeries,
 	}
 }
 
@@ -81,6 +89,10 @@ func (k ModelKind) Description() string {
 		return "Read images and documents and answer or extract structured data. Best for invoices, receipts, forms, ID documents, and photo/chart understanding."
 	case KindASR:
 		return "Transcribe speech to text. Best for call centers, meeting/medical/legal dictation, field notes, and domain vocabulary (jargon, product names, accents)."
+	case KindTabular:
+		return "Train a gradient-boosted model on a table (CSV) to classify rows or predict a number. Best for churn, fraud, lead scoring, and pricing."
+	case KindTimeSeries:
+		return "Forecast a time series (demand, traffic, capacity) from its history. Best for demand planning, inventory, and capacity."
 	default:
 		return string(k)
 	}

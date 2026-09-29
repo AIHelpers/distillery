@@ -480,6 +480,13 @@ type metricsJSON struct {
 	RTF              float64                 `json:"rtf"`
 	TotalHours       float64                 `json:"total_hours"`
 	DurationHist     []domain.DurationBucket `json:"duration_histogram"`
+
+	// Error is the worker's failure message (status "failed").
+	Error string `json:"error"`
+
+	// Table carries the complete tabular / time-series metrics in the
+	// domain.TrainingMetrics JSON shape (tabular and time_series tasks).
+	Table *domain.TrainingMetrics `json:"table"`
 }
 
 // readMetrics reads the metrics.json produced by the Python worker.
@@ -504,6 +511,10 @@ func (l *LocalTrainer) readMetrics(ctx context.Context, jobDir string, runErr er
 	}
 
 	if m.Status != "completed" {
+		if m.Error != "" {
+			return nil, fmt.Errorf("%w (status=%q): %s", ErrTrainingFailed, m.Status, m.Error)
+		}
+
 		return nil, fmt.Errorf("%w (status=%q)", ErrTrainingFailed, m.Status)
 	}
 
@@ -512,6 +523,19 @@ func (l *LocalTrainer) readMetrics(ctx context.Context, jobDir string, runErr er
 
 // metricsJSONToDomain maps the raw metrics.json shape onto domain.TrainingMetrics.
 func metricsJSONToDomain(m *metricsJSON) *domain.TrainingMetrics {
+	if m.Table != nil {
+		tm := *m.Table
+		if tm.TrainExamples == 0 {
+			tm.TrainExamples = m.Train
+		}
+
+		if tm.Epochs == 0 {
+			tm.Epochs = 1
+		}
+
+		return &tm
+	}
+
 	return &domain.TrainingMetrics{
 		FinalLoss:     m.Loss,
 		EvalAccuracy:  m.Accuracy,
@@ -668,7 +692,7 @@ func (l *LocalTrainer) gcOldJobsLocked() {
 		mod  time.Time
 	}
 
-	var dirs []jobDirInfo
+	dirs := make([]jobDirInfo, 0, len(entries))
 
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -731,6 +755,7 @@ func (l *LocalTrainer) writeJobConfig(
 	addNERConfig(cfg, job)
 	l.addASRConfig(cfg, job)
 	l.addPreferenceConfig(cfg, job)
+	addTableConfig(cfg, job)
 
 	// Track B: pass the task's JSON schema to the worker so the SFT eval can
 	// report a JSON validity rate.
@@ -746,6 +771,18 @@ func (l *LocalTrainer) writeJobConfig(
 	}
 
 	return os.WriteFile(filepath.Join(jobDir, "config.json"), data, 0o600)
+}
+
+// addTableConfig passes the tabular / forecast configuration (target, column
+// types, split, budget, ...) to the worker as nested objects.
+func addTableConfig(cfg map[string]interface{}, job *domain.TrainingJob) {
+	if job.Tabular != nil {
+		cfg["tabular"] = job.Tabular
+	}
+
+	if job.Forecast != nil {
+		cfg["forecast"] = job.Forecast
+	}
 }
 
 // addClassifierConfig passes classifier hyperparameters through to the
